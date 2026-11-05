@@ -180,11 +180,19 @@
       </div>
       <div class="ap-cards" id="ap-cards">
         <div class="ap-empty">
+          <svg class="ap-empty-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="8" y="12" width="32" height="28" rx="3"/>
+            <path d="M16 12V9a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3"/>
+            <line x1="18" y1="22" x2="30" y2="22"/>
+            <line x1="18" y1="28" x2="26" y2="28"/>
+          </svg>
           <h3>Нажми кнопку парсинга</h3>
           <p>Расширение соберёт объявления<br>с текущей страницы Авито</p>
+          <p class="ap-empty-hint">Или нажми <kbd>Alt+P</kbd> для быстрого доступа</p>
         </div>
       </div>
       <div class="ap-footer" id="ap-footer"></div>
+      <button class="ap-scroll-top" id="ap-scroll-top" title="Прокрутить вверх" style="display:none">↑</button>
     `;
     shadowRoot.appendChild(panelEl);
 
@@ -207,6 +215,26 @@
     panelEl.querySelector('#ap-reparse-btn').addEventListener('click', () => {
       hideParseBanner();
       handleParse();
+    });
+
+    // Scroll-to-top button
+    const cardsScrollEl = panelEl.querySelector('#ap-cards');
+    const scrollTopBtn = panelEl.querySelector('#ap-scroll-top');
+    if (cardsScrollEl && scrollTopBtn) {
+      cardsScrollEl.addEventListener('scroll', () => {
+        scrollTopBtn.style.display = cardsScrollEl.scrollTop > 300 ? 'flex' : 'none';
+      });
+      scrollTopBtn.addEventListener('click', () => {
+        cardsScrollEl.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    }
+
+    // Hotkey: Alt+P toggles panel
+    document.addEventListener('keydown', (e) => {
+      if (e.altKey && e.code === 'KeyP') {
+        e.preventDefault();
+        panelEl.classList.contains('ap-open') ? closePanel() : openPanel();
+      }
     });
 
     const searchInput = panelEl.querySelector('#ap-search-input');
@@ -468,6 +496,19 @@
     }
   }
 
+  // FAB badge: show item count on the floating button
+  function updateFabBadge(count) {
+    if (!fabEl) return;
+    // Remove old badge
+    const old = fabEl.querySelector('.ap-fab-badge');
+    if (old) old.remove();
+    if (!count) return;
+    const badge = document.createElement('span');
+    badge.className = 'ap-fab-badge';
+    badge.textContent = count > 999 ? '999+' : String(count);
+    fabEl.appendChild(badge);
+  }
+
   // URL-change watcher
   function getSearchKey() {
     // Сравниваем путь + параметры, но без номера страницы (p=)
@@ -514,9 +555,23 @@
 
     const cardsEl = panelEl.querySelector('#ap-cards');
     cardsEl.innerHTML = `
-      <div class="ap-loading-state">
-        <div class="ap-spinner"></div>
-        <p>Собираю объявления со страницы…</p>
+      <div class="ap-skeleton-list">
+        ${Array.from({ length: 5 }, () => `
+          <div class="ap-skeleton-card">
+            <div class="ap-skeleton-controls">
+              <div class="ap-skel ap-skel-check"></div>
+              <div class="ap-skel ap-skel-num"></div>
+            </div>
+            <div class="ap-skeleton-thumb ap-skel"></div>
+            <div class="ap-skeleton-body">
+              <div class="ap-skel ap-skel-title"></div>
+              <div class="ap-skel ap-skel-price"></div>
+              <div class="ap-skel ap-skel-desc"></div>
+              <div class="ap-skel ap-skel-desc ap-skel-desc-short"></div>
+              <div class="ap-skel ap-skel-meta"></div>
+            </div>
+          </div>
+        `).join('')}
       </div>
     `;
     openPanel();
@@ -562,6 +617,9 @@
 
         const sortEl = panelEl.querySelector('#ap-sort');
         if (sortEl) sortEl.value = 'default';
+
+        // Показать счётчик на FAB
+        updateFabBadge(lastResult.items.length);
 
         chrome.runtime.sendMessage({
           type: 'PARSE_RESULT',
@@ -1103,7 +1161,7 @@
       return;
     }
 
-    cardsEl.innerHTML = items.map((item) => {
+    cardsEl.innerHTML = items.map((item, renderIdx) => {
       const hasImage = item.image && item.image.startsWith('http');
       const isSelected = selectedIndices.has(item.itemNum);
 
@@ -1133,7 +1191,7 @@
       `;
 
       return `
-        <div class="ap-card ${isSelected ? 'ap-card-selected' : ''}" data-card-num="${item.itemNum}">
+        <div class="ap-card ${isSelected ? 'ap-card-selected' : ''}" data-card-num="${item.itemNum}" style="--ap-card-delay:${Math.min(renderIdx, 20) * 25}ms">
           <div class="ap-card-controls">
             <input type="checkbox" class="ap-card-check" ${isSelected ? 'checked' : ''} tabindex="0" aria-label="Выбрать объявление ${item.itemNum}">
             <span class="ap-card-num">№${item.itemNum}</span>
@@ -1244,6 +1302,21 @@
       btn.classList.remove('ap-copied');
       btn.textContent = original;
     }, 1500);
+
+    showToast(count > 0 ? `✓ Скопировано ${count} объявл.` : '✓ Скопировано');
+  }
+
+  function showToast(message) {
+    if (!panelEl) return;
+    const old = panelEl.querySelector('.ap-toast');
+    if (old) old.remove();
+
+    const toast = document.createElement('div');
+    toast.className = 'ap-toast';
+    toast.textContent = message;
+    panelEl.appendChild(toast);
+
+    setTimeout(() => { if (toast.parentNode) toast.remove(); }, 2200);
   }
 
   function openPanel() {
