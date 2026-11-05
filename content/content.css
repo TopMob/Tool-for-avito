@@ -89,6 +89,18 @@
   opacity: 0.5;
 }
 
+/* FAB pulse when search has changed after a parse */
+.ap-fab.ap-fab-changed {
+  border-color: #f5a623;
+  color: #f5a623;
+  animation: ap-fab-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes ap-fab-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 166, 35, 0.4); }
+  50%       { box-shadow: 0 0 0 6px rgba(245, 166, 35, 0); }
+}
+
 .ap-fab-icon {
   width: 20px;
   height: 20px;
@@ -124,6 +136,62 @@
   padding: 14px 16px 12px;
   border-bottom: 1px solid var(--ap-border);
   flex-shrink: 0;
+}
+
+/* Reparse banner — appears when search URL changed after a parse */
+
+.ap-reparse-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 14px;
+  background: #fff8e1;
+  border-bottom: 1px solid #ffe082;
+  flex-shrink: 0;
+}
+
+:host([data-theme="dark"]) .ap-reparse-banner {
+  background: #2a2214;
+  border-bottom-color: #5a4a1a;
+}
+
+.ap-reparse-text {
+  font-size: 12px;
+  font-weight: 500;
+  color: #7a5800;
+}
+
+:host([data-theme="dark"]) .ap-reparse-text {
+  color: #e0b840;
+}
+
+.ap-reparse-btn {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: var(--ap-radius-sm);
+  border: 1px solid #f5a623;
+  background: #f5a623;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+  font-family: var(--ap-font);
+}
+
+.ap-reparse-btn:hover {
+  background: #e09518;
+  border-color: #e09518;
+}
+
+.ap-reparse-btn:active {
+  background: #c8820e;
+}
+
+.ap-reparse-btn:focus-visible {
+  outline: 2px solid var(--ap-accent);
+  outline-offset: 1px;
 }
 
 .ap-header-top {

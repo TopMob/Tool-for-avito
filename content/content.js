@@ -21,6 +21,9 @@
   let isLoadingAll = false;
   let abortLoadingAll = false;
 
+  let lastParsedUrl = '';   // URL страницы на момент последнего парсинга
+  let urlWatchTimer = null; // таймер поллинга URL
+
   let activeFields = {
     aiPrompt: true,
     title: true,
@@ -92,6 +95,10 @@
           <button class="ap-close" title="Закрыть">✕</button>
         </div>
         <div class="ap-stats" id="ap-stats"></div>
+      </div>
+      <div class="ap-reparse-banner" id="ap-reparse-banner" style="display:none">
+        <span class="ap-reparse-text">🔄 Поиск изменился</span>
+        <button class="ap-reparse-btn" id="ap-reparse-btn">Пересобрать</button>
       </div>
       <div class="ap-search-bar" id="ap-search-bar" style="display:none">
         <div class="ap-search-input-wrap">
@@ -196,6 +203,11 @@
     panelEl.querySelector('#ap-filter-exclude').addEventListener('input', handleFilterExcludeInput);
     panelEl.querySelector('#ap-filter-hide-reserved').addEventListener('change', handleHideReservedChange);
     panelEl.querySelector('#ap-filter-reset').addEventListener('click', handleFiltersReset);
+
+    panelEl.querySelector('#ap-reparse-btn').addEventListener('click', () => {
+      hideParseBanner();
+      handleParse();
+    });
 
     const searchInput = panelEl.querySelector('#ap-search-input');
     const searchClear = panelEl.querySelector('#ap-search-clear');
@@ -456,6 +468,45 @@
     }
   }
 
+  // URL-change watcher
+  function getSearchKey() {
+    // Сравниваем путь + параметры, но без номера страницы (p=)
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.delete('p');
+      return u.pathname + '?' + u.searchParams.toString();
+    } catch {
+      return window.location.href;
+    }
+  }
+
+  function showParseBanner() {
+    const banner = panelEl && panelEl.querySelector('#ap-reparse-banner');
+    if (banner) banner.style.display = 'flex';
+    // Подсветить FAB, чтобы пользователь заметил изменение
+    if (fabEl) fabEl.classList.add('ap-fab-changed');
+  }
+
+  function hideParseBanner() {
+    const banner = panelEl && panelEl.querySelector('#ap-reparse-banner');
+    if (banner) banner.style.display = 'none';
+    if (fabEl) fabEl.classList.remove('ap-fab-changed');
+  }
+
+  function startUrlWatch() {
+    // Поллинг — надёжнее MutationObserver для SPA-переходов Авито
+    if (urlWatchTimer) return;
+    urlWatchTimer = setInterval(() => {
+      if (!lastParsedUrl) return; // ещё не было парсинга
+      const current = getSearchKey();
+      if (current !== lastParsedUrl) {
+        showParseBanner();
+      } else {
+        hideParseBanner();
+      }
+    }, 1000);
+  }
+
   // Parse
   function handleParse() {
     fabEl.classList.add('ap-loading');
@@ -473,6 +524,9 @@
     setTimeout(() => {
       try {
         lastResult = AvitoParser.parse();
+        lastParsedUrl = getSearchKey(); // запоминаем ключ поиска
+        hideParseBanner();
+        startUrlWatch(); // запускаем слежение (если ещё не запущено)
         pagesLoaded = 1;
         loadingPages = false;
         isLoadingAll = false;
