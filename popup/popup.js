@@ -47,10 +47,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       await chrome.tabs.sendMessage(tab.id, { type: 'TRIGGER_PARSE' });
 
       btnParse.textContent = 'Готово';
+      // Автоматически закрываем всплывающее окно попапа,
+      // чтобы сразу открыть боковую панель на странице без лишних кликов
       setTimeout(() => {
-        btnParse.textContent = 'Собрать объявления';
-        btnParse.disabled = false;
-      }, 1200);
+        window.close();
+      }, 250);
     } catch {
       btnParse.textContent = 'Ошибка';
       setTimeout(() => {
