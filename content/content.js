@@ -23,6 +23,7 @@
 
   let lastParsedUrl = '';   // URL страницы на момент последнего парсинга
   let urlWatchTimer = null; // таймер поллинга URL
+  let filtersCollapsed = false;
 
   let activeFields = {
     aiPrompt: true,
@@ -80,7 +81,7 @@
     fabEl = document.createElement('button');
     fabEl.className = 'ap-fab';
     fabEl.innerHTML = ICON_PARSE;
-    fabEl.title = 'Собрать объявления';
+    fabEl.title = 'Собрать объявления (Alt+P)';
     fabEl.addEventListener('click', handleParse);
     shadowRoot.appendChild(fabEl);
   }
@@ -92,7 +93,10 @@
       <div class="ap-header">
         <div class="ap-header-top">
           <h2>Avito Parser</h2>
-          <button class="ap-close" title="Закрыть">✕</button>
+          <div class="ap-header-actions">
+            <button class="ap-header-btn" id="ap-toggle-filters" title="Скрыть/показать фильтры и поля">Фильтры ▾</button>
+            <button class="ap-close" title="Закрыть (Esc)">✕</button>
+          </div>
         </div>
         <div class="ap-stats" id="ap-stats"></div>
       </div>
@@ -197,6 +201,19 @@
     shadowRoot.appendChild(panelEl);
 
     panelEl.querySelector('.ap-close').addEventListener('click', closePanel);
+
+    const toggleFiltersBtn = panelEl.querySelector('#ap-toggle-filters');
+    if (toggleFiltersBtn) {
+      toggleFiltersBtn.addEventListener('click', () => {
+        filtersCollapsed = !filtersCollapsed;
+        const fb = panelEl.querySelector('#ap-filters-bar');
+        const fieldsB = panelEl.querySelector('#ap-fields-bar');
+        if (fb) fb.style.display = filtersCollapsed ? 'none' : 'flex';
+        if (fieldsB) fieldsB.style.display = filtersCollapsed ? 'none' : 'flex';
+        toggleFiltersBtn.textContent = filtersCollapsed ? 'Фильтры ▸' : 'Фильтры ▾';
+        toggleFiltersBtn.classList.toggle('ap-collapsed', filtersCollapsed);
+      });
+    }
     panelEl.querySelector('#ap-export-row').addEventListener('click', handleExport);
     panelEl.querySelector('#ap-sort').addEventListener('change', handleSort);
     panelEl.querySelector('#ap-load-more').addEventListener('click', handleLoadMore);
@@ -229,11 +246,18 @@
       });
     }
 
-    // Hotkey: Alt+P toggles panel
+    // Hotkey: Alt+P toggles panel; Escape closes it
     document.addEventListener('keydown', (e) => {
       if (e.altKey && e.code === 'KeyP') {
         e.preventDefault();
         panelEl.classList.contains('ap-open') ? closePanel() : openPanel();
+      }
+      if (e.key === 'Escape' && panelEl.classList.contains('ap-open')) {
+        // Only close if no input is focused inside the panel
+        const focused = shadowRoot.activeElement;
+        if (!focused || (!focused.matches('input, select, textarea'))) {
+          closePanel();
+        }
       }
     });
 
@@ -1079,15 +1103,40 @@
     if (info) info.textContent = pagesLoaded > 1 ? `Стр. 1–${pagesLoaded}` : 'Стр. 1';
   }
 
-  function updateStats() {
+  function updateStats(currentItems) {
     const statsEl = panelEl.querySelector('#ap-stats');
-    if (statsEl && lastResult) {
-      statsEl.innerHTML = `
-        <span class="ap-stat">Найдено: <strong>${lastResult.items.length}</strong></span>
-        <span class="ap-stat">Запрос: <strong>${esc(AvitoParser.getSearchQuery())}</strong></span>
-        <span class="ap-stat">Страниц: <strong>${pagesLoaded}</strong></span>
+    if (!statsEl || !lastResult) return;
+
+    const list = currentItems || displayItems || lastResult.items;
+    const prices = list
+      .map(i => i.priceNum)
+      .filter(p => typeof p === 'number' && !isNaN(p) && p > 0);
+
+    let priceStatsHtml = '';
+    if (prices.length > 0) {
+      const minPrice = Math.min(...prices);
+      const maxPrice = Math.max(...prices);
+      const avgPrice = Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
+      const fmt = (n) => n.toLocaleString('ru-RU') + ' ₽';
+      priceStatsHtml = `
+        <span class="ap-stat ap-stat-price" title="Минимальная цена">Мин: <strong>${fmt(minPrice)}</strong></span>
+        <span class="ap-stat ap-stat-price" title="Средняя цена">Ср: <strong>${fmt(avgPrice)}</strong></span>
+        <span class="ap-stat ap-stat-price" title="Максимальная цена">Макс: <strong>${fmt(maxPrice)}</strong></span>
       `;
     }
+
+    const total = lastResult.items.length;
+    const isFiltered = list.length !== total;
+    const countText = isFiltered
+      ? `Найдено: <strong>${list.length}</strong> <span class="ap-stat-sub">из ${total}</span>`
+      : `Найдено: <strong>${total}</strong>`;
+
+    statsEl.innerHTML = `
+      <span class="ap-stat">${countText}</span>
+      <span class="ap-stat" title="${esc(AvitoParser.getSearchQuery())}">Запрос: <strong>${esc(AvitoParser.getSearchQuery()) || '—'}</strong></span>
+      <span class="ap-stat">Стр: <strong>${pagesLoaded}</strong></span>
+      ${priceStatsHtml}
+    `;
   }
 
   // Render
@@ -1101,6 +1150,8 @@
     const footerEl = panelEl.querySelector('#ap-footer');
 
     if (!lastResult || lastResult.items.length === 0) {
+      const toggleFiltersBtn = panelEl.querySelector('#ap-toggle-filters');
+      if (toggleFiltersBtn) toggleFiltersBtn.style.display = 'none';
       statsEl.innerHTML = '';
       searchBar.style.display = 'none';
       if (filtersBar) filtersBar.style.display = 'none';
@@ -1116,6 +1167,9 @@
       footerEl.textContent = '';
       return;
     }
+
+    const toggleFiltersBtn = panelEl.querySelector('#ap-toggle-filters');
+    if (toggleFiltersBtn) toggleFiltersBtn.style.display = '';
 
     updateStats();
 
@@ -1133,9 +1187,9 @@
     }
 
     searchBar.style.display = 'flex';
-    if (filtersBar) filtersBar.style.display = 'flex';
+    if (filtersBar) filtersBar.style.display = filtersCollapsed ? 'none' : 'flex';
     toolbar.style.display = 'flex';
-    fieldsBar.style.display = 'flex';
+    if (fieldsBar) fieldsBar.style.display = filtersCollapsed ? 'none' : 'flex';
     exportRow.style.display = 'flex';
     syncFieldsUI();
     updatePageInfo();
@@ -1151,6 +1205,8 @@
   function renderCards(items) {
     const cardsEl = panelEl.querySelector('#ap-cards');
 
+    updateStats(items);
+
     if (items.length === 0) {
       cardsEl.innerHTML = `
         <div class="ap-empty">
@@ -1161,9 +1217,15 @@
       return;
     }
 
+    const validPrices = items
+      .map(i => i.priceNum)
+      .filter(p => typeof p === 'number' && !isNaN(p) && p > 0);
+    const minPrice = validPrices.length > 1 ? Math.min(...validPrices) : null;
+
     cardsEl.innerHTML = items.map((item, renderIdx) => {
       const hasImage = item.image && item.image.startsWith('http');
       const isSelected = selectedIndices.has(item.itemNum);
+      const isBestPrice = minPrice !== null && item.priceNum === minPrice;
 
       let sellerMeta = '';
       if (item.seller) {
@@ -1174,6 +1236,7 @@
       }
 
       const meta = [
+        isBestPrice ? `<span class="ap-badge-best-price" title="Самая выгодная цена в текущей подборке">★ Лучшая цена</span>` : '',
         item.isReserved ? `<span class="ap-badge-reserved" title="Товар зарезервирован">Зарезервирован</span>` : '',
         item.hasDelivery ? `<span class="ap-badge-delivery" title="${esc(item.deliveryText || 'Доступна Авито Доставка')}">🚚 ${esc(item.deliveryText || 'Доставка')}</span>` : '',
         item.isPromoted ? `<span class="ap-badge-promoted" title="Продвигаемое объявление">Продвинуто ⬆</span>` : '',
@@ -1200,9 +1263,19 @@
             ? `<div class="ap-card-thumb"><img src="${esc(item.image)}" alt="" loading="lazy"></div>`
             : ''}
           <div class="ap-card-body">
-            <div class="ap-card-title">${item.url
-              ? `<a href="${esc(item.url)}" target="_blank" rel="noopener">${esc(item.title || 'Без названия')}</a>`
-              : esc(item.title || 'Без названия')}</div>
+            <div class="ap-card-title-row">
+              <div class="ap-card-title">${item.url
+                ? `<a href="${esc(item.url)}" target="_blank" rel="noopener">${esc(item.title || 'Без названия')}</a>`
+                : esc(item.title || 'Без названия')}</div>
+              ${item.url ? `
+                <button class="ap-card-copy-url" data-url="${esc(item.url)}" title="Скопировать ссылку" aria-label="Скопировать ссылку">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                  </svg>
+                </button>
+              ` : ''}
+            </div>
             ${priceHtml}
             ${item.description ? `<div class="ap-card-desc">${esc(item.description)}</div>` : ''}
             ${meta ? `<div class="ap-card-meta">${meta}</div>` : ''}
@@ -1210,6 +1283,21 @@
         </div>
       `;
     }).join('');
+
+    // Bind copy URL buttons
+    cardsEl.querySelectorAll('.ap-card-copy-url').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const url = btn.dataset.url;
+        if (!url) return;
+        try {
+          await navigator.clipboard.writeText(url);
+          showToast('✓ Ссылка скопирована');
+        } catch {
+          showToast('Не удалось скопировать');
+        }
+      });
+    });
 
     // Bind checkbox clicks
     cardsEl.querySelectorAll('.ap-card-check').forEach(cb => {
@@ -1223,7 +1311,7 @@
     // Click on card row toggles checkbox
     cardsEl.querySelectorAll('.ap-card').forEach(card => {
       card.addEventListener('click', (e) => {
-        if (e.target.closest('a') || e.target.closest('.ap-card-check')) return;
+        if (e.target.closest('a') || e.target.closest('.ap-card-check') || e.target.closest('.ap-card-copy-url')) return;
         const num = parseInt(card.dataset.cardNum, 10);
         toggleSelection(num);
       });
