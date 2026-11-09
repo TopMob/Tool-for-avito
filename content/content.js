@@ -94,9 +94,17 @@
     fabEl = document.createElement('button');
     fabEl.className = 'ap-fab';
     setSvgIcon(fabEl, ICON_PARSE);
-    fabEl.title = 'Собрать объявления (Alt+P)';
-    fabEl.addEventListener('click', handleParse);
+    fabEl.title = 'Открыть панель Tool for Avito';
+    fabEl.addEventListener('click', handleFabClick);
     shadowRoot.appendChild(fabEl);
+  }
+
+  function handleFabClick() {
+    if (panelEl.classList.contains('ap-open')) {
+      closePanel();
+    } else {
+      openPanel();
+    }
   }
 
   function createPanel() {
@@ -107,6 +115,7 @@
         <div class="ap-header-top">
           <h2>Tool for Avito</h2>
           <div class="ap-header-actions">
+            <button class="ap-header-btn" id="ap-header-parse" title="Собрать объявления с текущей страницы">🔄 Собрать</button>
             <button class="ap-header-btn" id="ap-toggle-filters" title="Скрыть/показать фильтры и поля">Фильтры ▾</button>
             <button class="ap-close" title="Закрыть (Esc)">✕</button>
           </div>
@@ -195,25 +204,17 @@
         <button class="ap-btn" data-format="json">JSON</button>
         <button class="ap-btn" data-format="tsv">TSV</button>
       </div>
-      <div class="ap-cards" id="ap-cards">
-        <div class="ap-empty">
-          <svg class="ap-empty-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="8" y="12" width="32" height="28" rx="3"/>
-            <path d="M16 12V9a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3"/>
-            <line x1="18" y1="22" x2="30" y2="22"/>
-            <line x1="18" y1="28" x2="26" y2="28"/>
-          </svg>
-          <h3>Нажми кнопку парсинга</h3>
-          <p>Расширение соберёт объявления<br>с текущей страницы Авито</p>
-          <p class="ap-empty-hint">Или нажми <kbd>Alt+P</kbd> для быстрого доступа</p>
-        </div>
-      </div>
-      <div class="ap-footer" id="ap-footer"></div>
+      <div class="ap-cards" id="ap-cards"></div>
       <button class="ap-scroll-top" id="ap-scroll-top" title="Прокрутить вверх" style="display:none">↑</button>
     `;
     shadowRoot.appendChild(panelEl);
 
     panelEl.querySelector('.ap-close').addEventListener('click', closePanel);
+
+    const headerParseBtn = panelEl.querySelector('#ap-header-parse');
+    if (headerParseBtn) {
+      headerParseBtn.addEventListener('click', handleParse);
+    }
 
     const toggleFiltersBtn = panelEl.querySelector('#ap-toggle-filters');
     if (toggleFiltersBtn) {
@@ -259,12 +260,8 @@
       });
     }
 
-    // Hotkey: Alt+P toggles panel; Escape closes it
+    // Hotkey: Escape closes panel
     document.addEventListener('keydown', (e) => {
-      if (e.altKey && e.code === 'KeyP') {
-        e.preventDefault();
-        panelEl.classList.contains('ap-open') ? closePanel() : openPanel();
-      }
       if (e.key === 'Escape' && panelEl.classList.contains('ap-open')) {
         // Only close if no input is focused inside the panel
         const focused = shadowRoot.activeElement;
@@ -273,6 +270,8 @@
         }
       }
     });
+
+    renderInitialEmptyState();
 
     const searchInput = panelEl.querySelector('#ap-search-input');
     const searchClear = panelEl.querySelector('#ap-search-clear');
@@ -683,16 +682,7 @@
         // Показать счётчик на FAB
         updateFabBadge(lastResult.items.length);
 
-        chrome.runtime.sendMessage({
-          type: 'PARSE_RESULT',
-          data: {
-            query: AvitoParser.getSearchQuery(),
-            count: lastResult.items.length,
-            source: lastResult.source,
-            url: window.location.href,
-            parsedAt: new Date().toISOString(),
-          },
-        }).catch(() => {});
+        saveSessionToStorage();
       } catch (err) {
         renderError(err);
       }
@@ -856,6 +846,7 @@
       applySortAndRender();
       updatePageInfo();
       updateStats();
+      saveSessionToStorage();
 
       btn.textContent = '+ След. стр.';
     } catch {
@@ -958,6 +949,8 @@
       loadingPages = false;
       isLoadingAll = false;
       abortLoadingAll = false;
+
+      saveSessionToStorage();
 
       btnLoadAll.classList.remove('ap-btn-stop');
       if (!btnLoadAll.disabled) {
@@ -1081,12 +1074,13 @@
   }
 
   function normalizeItem(raw) {
+    if (typeof AvitoParser !== 'undefined' && AvitoParser.normalizeNextDataItem) {
+      return AvitoParser.normalizeNextDataItem(raw);
+    }
+
     const getField = (keys) => {
       for (const k of keys) {
         if (raw[k] != null) return String(raw[k]).trim();
-        for (const v of Object.values(raw)) {
-          if (v && typeof v === 'object' && !Array.isArray(v) && v[k] != null) return String(v[k]).trim();
-        }
       }
       return '';
     };
@@ -1127,27 +1121,10 @@
     if (raw.seller) seller = typeof raw.seller === 'object' ? (raw.seller.name || '') : String(raw.seller);
     if (AvitoParser.cleanSeller) seller = AvitoParser.cleanSeller(seller);
 
-    let description = '';
-    const descKeys = ['description', 'snippet', 'body', 'shortDescription', 'comment', 'text', 'shortText'];
-    for (const k of descKeys) {
-      if (raw[k] && typeof raw[k] === 'string' && raw[k].trim()) {
-        description = raw[k].trim().replace(/\s+/g, ' ');
-        break;
-      }
-      if (raw[k] && typeof raw[k] === 'object' && !Array.isArray(raw[k])) {
-        const t = raw[k].text || raw[k].value || raw[k].plainText;
-        if (t) {
-          description = String(t).trim().replace(/\s+/g, ' ');
-          break;
-        }
-      }
-    }
-    if (!description) {
-      description = getField(descKeys).replace(/\s+/g, ' ');
-    }
+    const description = AvitoParser.extractDescription ? AvitoParser.extractDescription(raw) : '';
 
     return {
-      title: getField(['title', 'name']),
+      title: AvitoParser.cleanTitle ? AvitoParser.cleanTitle(getField(['title', 'name'])) : getField(['title', 'name']),
       price,
       priceNum,
       hasDelivery,
@@ -1195,7 +1172,7 @@
     statsFragment.appendChild(countStat);
 
     // 2. Query
-    const query = AvitoParser.getSearchQuery() || '—';
+    const query = (lastResult && lastResult.savedQuery) || AvitoParser.getSearchQuery() || '—';
     const queryStat = document.createElement('span');
     queryStat.className = 'ap-stat';
     queryStat.title = query;
@@ -1248,7 +1225,6 @@
     const toolbar = panelEl.querySelector('#ap-toolbar');
     const fieldsBar = panelEl.querySelector('#ap-fields-bar');
     const exportRow = panelEl.querySelector('#ap-export-row');
-    const footerEl = panelEl.querySelector('#ap-footer');
 
     if (!lastResult || lastResult.items.length === 0) {
       const toggleFiltersBtn = panelEl.querySelector('#ap-toggle-filters');
@@ -1272,7 +1248,6 @@
 
       const cardsContainer = panelEl.querySelector('#ap-cards');
       if (cardsContainer) cardsContainer.replaceChildren(emptyDiv);
-      if (footerEl) footerEl.textContent = '';
       return;
     }
 
@@ -1304,15 +1279,6 @@
     renderCards(getFilteredItems());
     updateSelectionInfo();
     updateSearchCount();
-
-    if (footerEl) {
-      footerEl.textContent = 'Источник: ';
-      const srcTag = document.createElement('span');
-      srcTag.className = 'ap-source-tag';
-      srcTag.textContent = lastResult.source || '';
-      footerEl.appendChild(srcTag);
-      footerEl.appendChild(document.createTextNode(` · ${new Date().toLocaleTimeString('ru-RU')}`));
-    }
   }
 
   function createCardElement(item, renderIdx, minPrice, isSelected) {
@@ -1425,10 +1391,10 @@
     body.appendChild(priceRow);
 
     // Description
-    if (item.description) {
+    if (item.description && typeof item.description === 'string' && item.description.trim()) {
       const descEl = document.createElement('div');
       descEl.className = 'ap-card-desc';
-      descEl.textContent = item.description;
+      descEl.textContent = item.description.trim();
       body.appendChild(descEl);
     }
 
@@ -1593,14 +1559,15 @@
     const itemsToExport = selectedVisible.length > 0 ? selectedVisible : visible;
 
     const format = btn.dataset.format;
+    const exportQuery = (lastResult && lastResult.savedQuery) || AvitoParser.getSearchQuery();
     let text = '';
 
     switch (format) {
-      case 'md': text = AvitoParser.toMarkdown(itemsToExport, activeFields); break;
-      case 'json': text = AvitoParser.toJSON(itemsToExport, activeFields); break;
+      case 'md': text = AvitoParser.toMarkdown(itemsToExport, activeFields, exportQuery); break;
+      case 'json': text = AvitoParser.toJSON(itemsToExport, activeFields, exportQuery); break;
       case 'tsv':
       case 'csv':
-        text = AvitoParser.toTSV ? AvitoParser.toTSV(itemsToExport, activeFields) : AvitoParser.toCSV(itemsToExport, activeFields);
+        text = AvitoParser.toTSV ? AvitoParser.toTSV(itemsToExport, activeFields, exportQuery) : AvitoParser.toCSV(itemsToExport, activeFields, exportQuery);
         break;
       default: return;
     }
@@ -1652,16 +1619,189 @@
 
   function openPanel() {
     panelEl.classList.add('ap-open');
+    if (fabEl) fabEl.title = 'Закрыть панель (Esc)';
+    if (!lastResult || !lastResult.items || lastResult.items.length === 0) {
+      renderInitialEmptyState();
+    }
   }
 
   function closePanel() {
     panelEl.classList.remove('ap-open');
+    if (fabEl) fabEl.title = 'Открыть панель Tool for Avito';
+  }
+
+  function renderInitialEmptyState() {
+    if (lastResult && lastResult.items && lastResult.items.length > 0) return;
+    const cardsEl = panelEl && panelEl.querySelector('#ap-cards');
+    if (!cardsEl) return;
+
+    chrome.storage.local.get(['savedSession', 'lastParse'], (res) => {
+      if (lastResult && lastResult.items && lastResult.items.length > 0) return;
+
+      const session = res && (res.savedSession || res.lastParse);
+
+      const emptyDiv = document.createElement('div');
+      emptyDiv.className = 'ap-empty';
+
+      const badge = document.createElement('div');
+      badge.className = 'ap-empty-badge';
+      badge.textContent = 'Готово к работе';
+
+      const h3 = document.createElement('h3');
+      h3.textContent = 'Сбор объявлений';
+
+      const p = document.createElement('p');
+      p.textContent = 'Собери данные с текущей страницы или загрузи сохранённые лоты';
+
+      const actions = document.createElement('div');
+      actions.className = 'ap-empty-actions';
+
+      const parseBtn = document.createElement('button');
+      parseBtn.className = 'ap-btn ap-primary ap-empty-btn';
+      parseBtn.id = 'ap-empty-parse-now';
+      parseBtn.textContent = '⚡ Собрать текущую страницу';
+      parseBtn.addEventListener('click', handleParse);
+      actions.appendChild(parseBtn);
+
+      if (session && Array.isArray(session.items) && session.items.length > 0) {
+        const loadBtn = document.createElement('button');
+        loadBtn.className = 'ap-btn ap-empty-btn ap-empty-load-session';
+        loadBtn.id = 'ap-empty-load-saved';
+
+        const titleSpan = document.createElement('span');
+        titleSpan.className = 'ap-empty-btn-title';
+        titleSpan.textContent = '📂 Загрузить сохранённую сессию';
+
+        const descSpan = document.createElement('span');
+        descSpan.className = 'ap-empty-session-desc';
+
+        const d = session.parsedAt ? new Date(session.parsedAt) : null;
+        const dateFormatted = d ? d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : '';
+        const count = session.items.length;
+        const q = session.query || 'Поиск';
+        descSpan.textContent = `«${q}» · ${count} лотов ${dateFormatted ? '(' + dateFormatted + ')' : ''}`;
+
+        loadBtn.append(titleSpan, descSpan);
+        loadBtn.addEventListener('click', () => {
+          loadSavedSession(session);
+        });
+        actions.appendChild(loadBtn);
+      }
+
+      emptyDiv.append(badge, h3, p, actions);
+      cardsEl.replaceChildren(emptyDiv);
+    });
+  }
+
+  function loadSavedSession(session) {
+    if (!session || !Array.isArray(session.items) || session.items.length === 0) return;
+
+    lastResult = {
+      items: session.items.map((it, idx) => ({
+        ...it,
+        itemNum: it.itemNum != null ? it.itemNum : (idx + 1),
+      })),
+      source: 'Сохранено',
+      savedQuery: session.query || '',
+    };
+
+    lastParsedUrl = session.url || '';
+    pagesLoaded = 1;
+    loadingPages = false;
+    isLoadingAll = false;
+    abortLoadingAll = false;
+    currentSort = 'default';
+    searchQuery = '';
+    filterDelivery = 'all';
+    filterInclude = '';
+    filterExclude = '';
+    selectedIndices = new Set();
+    displayItems = [...lastResult.items];
+
+    const searchInput = panelEl.querySelector('#ap-search-input');
+    if (searchInput) searchInput.value = '';
+    const searchClear = panelEl.querySelector('#ap-search-clear');
+    if (searchClear) searchClear.style.display = 'none';
+
+    const incInput = panelEl.querySelector('#ap-filter-include');
+    if (incInput) incInput.value = '';
+    const excInput = panelEl.querySelector('#ap-filter-exclude');
+    if (excInput) excInput.value = '';
+
+    panelEl.querySelectorAll('#ap-delivery-pills .ap-pill').forEach(b => {
+      b.classList.toggle('ap-pill-active', b.dataset.delivery === 'all');
+    });
+    updateFilterResetVisibility();
+
+    renderResults();
+
+    const sortEl = panelEl.querySelector('#ap-sort');
+    if (sortEl) sortEl.value = 'default';
+
+    updateFabBadge(lastResult.items.length);
+    openPanel();
+    showToast(`✓ Загружено ${lastResult.items.length} сохранённых лотов`);
+  }
+
+  function saveSessionToStorage() {
+    if (!lastResult || !Array.isArray(lastResult.items) || lastResult.items.length === 0) return;
+    const maxItems = 300;
+    const itemsToSave = lastResult.items.slice(0, maxItems).map((item, idx) => ({
+      itemNum: item.itemNum != null ? item.itemNum : (idx + 1),
+      id: item.id || null,
+      title: item.title || '',
+      price: item.price || '',
+      priceNum: item.priceNum != null ? item.priceNum : null,
+      oldPrice: item.oldPrice || '',
+      discount: item.discount || '',
+      hasDelivery: !!item.hasDelivery,
+      deliveryText: item.deliveryText || '',
+      isReserved: !!item.isReserved,
+      isPromoted: !!item.isPromoted,
+      description: item.description || '',
+      location: item.location || '',
+      date: item.date || '',
+      seller: item.seller || '',
+      sellerRating: item.sellerRating || '',
+      sellerReviews: item.sellerReviews || '',
+      url: item.url || '',
+      image: item.image || '',
+    }));
+
+    const sessionData = {
+      query: (lastResult && lastResult.savedQuery) || AvitoParser.getSearchQuery() || 'Поиск Авито',
+      count: lastResult.items.length,
+      url: window.location.href,
+      parsedAt: new Date().toISOString(),
+      items: itemsToSave,
+    };
+
+    chrome.storage.local.set({
+      savedSession: sessionData,
+      lastParse: sessionData,
+    }).catch(() => {});
+
+    chrome.runtime.sendMessage({
+      type: 'PARSE_RESULT',
+      data: sessionData,
+    }).catch(() => {});
   }
 
   // Messages from popup / service worker
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === 'TRIGGER_PARSE') {
       handleParse();
+      sendResponse({ ok: true });
+    }
+    if (msg.type === 'LOAD_SAVED_SESSION') {
+      if (msg.session) {
+        loadSavedSession(msg.session);
+      } else {
+        chrome.storage.local.get(['savedSession', 'lastParse'], (res) => {
+          const s = res && (res.savedSession || res.lastParse);
+          if (s) loadSavedSession(s);
+        });
+      }
       sendResponse({ ok: true });
     }
     if (msg.type === 'GET_LAST_RESULT') {
@@ -1671,7 +1811,7 @@
           ? {
               count: lastResult.items.length,
               source: lastResult.source,
-              query: AvitoParser.getSearchQuery(),
+              query: (lastResult && lastResult.savedQuery) || AvitoParser.getSearchQuery(),
             }
           : null,
       });

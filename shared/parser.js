@@ -49,7 +49,19 @@ const AvitoParser = (() => {
     if (!raw) return '';
     let t = cleanText(raw);
     t = t.replace(/^объявление\s*[«"“](.*?)[»"”]$/i, '$1');
+    if (/^(?:показать\s+(?:телефон|номер|контакт)|написать(?:\s+сообщение|\s+продавцу|\s+в\s+чат)?|позвонить|связаться|в\s+избранно[ем]|добавить\s+в\s+избранное|купить\s+с\s+доставкой|в\s+корзину|откликнуться)$/i.test(t)) {
+      return '';
+    }
     return t.trim();
+  }
+
+  function cleanDate(str) {
+    if (!str) return '';
+    const s = cleanText(str);
+    if (/^(?:показать|написать|позвонить|связаться|в\s+избранное|купить|доставка)/i.test(s)) {
+      return '';
+    }
+    return s;
   }
 
   function extractNumericPrice(rawPrice) {
@@ -256,25 +268,43 @@ const AvitoParser = (() => {
   }
 
   function extractDescription(raw) {
-    const keys = ['description', 'snippet', 'body', 'shortDescription', 'comment', 'text', 'shortText'];
-    for (const key of keys) {
-      if (raw[key] && typeof raw[key] === 'string' && raw[key].trim()) {
-        return raw[key].trim().replace(/\s+/g, ' ');
+    if (!raw || typeof raw !== 'object') return '';
+
+    const directKeys = ['description', 'snippetDescription', 'shortDescription', 'body', 'comment', 'snippet'];
+    for (const key of directKeys) {
+      const val = raw[key];
+      if (val && typeof val === 'string') {
+        const cleaned = cleanText(val.replace(/<[^>]+>/g, ' '));
+        if (cleaned && !isBadDescriptionText(cleaned)) {
+          return cleaned;
+        }
       }
-      if (raw[key] && typeof raw[key] === 'object' && !Array.isArray(raw[key])) {
-        const text = raw[key].text || raw[key].value || raw[key].plainText;
-        if (text) return String(text).trim().replace(/\s+/g, ' ');
-      }
-    }
-    for (const prop of Object.values(raw)) {
-      if (prop && typeof prop === 'object' && !Array.isArray(prop)) {
-        for (const key of keys) {
-          if (prop[key] && typeof prop[key] === 'string' && prop[key].trim()) {
-            return prop[key].trim().replace(/\s+/g, ' ');
+      if (val && typeof val === 'object' && !Array.isArray(val)) {
+        const text = val.text || val.value || val.plainText || val.description;
+        if (text && typeof text === 'string') {
+          const cleaned = cleanText(text.replace(/<[^>]+>/g, ' '));
+          if (cleaned && !isBadDescriptionText(cleaned)) {
+            return cleaned;
           }
         }
       }
     }
+
+    const nestedContainers = [raw.item, raw.catalog, raw.snippet, raw.data, raw.parameters];
+    for (const container of nestedContainers) {
+      if (container && typeof container === 'object' && !Array.isArray(container)) {
+        for (const key of ['description', 'snippetDescription', 'shortDescription', 'body', 'comment']) {
+          const val = container[key];
+          if (val && typeof val === 'string') {
+            const cleaned = cleanText(val.replace(/<[^>]+>/g, ' '));
+            if (cleaned && !isBadDescriptionText(cleaned)) {
+              return cleaned;
+            }
+          }
+        }
+      }
+    }
+
     return '';
   }
 
@@ -481,39 +511,128 @@ const AvitoParser = (() => {
   }
 
   function isBadDescriptionText(text) {
-    if (!text || text.length < 10) return true;
-    const lower = text.toLowerCase().trim();
+    if (!text || typeof text !== 'string') return true;
+    const clean = text.replace(/\s+/g, ' ').trim();
+    if (clean.length < 10) return true;
+    const lower = clean.toLowerCase();
 
-    // Avito delivery snippet widget badges (e.g. 'Доставка от 2 дней')
+    // 1. Кнопки контактов, звонков, чата и сообщений
+    if (/^(?:показать\s+(?:телефон|номер|контакт[ы]?)|написать(?:\s+(?:сообщение|продавцу|в\s+чат))?|позвонить|связаться(?:\s+с\s+продавцом)?|заказать\s+звонок|откликнуться|сообщение|чат)\b/i.test(lower)) {
+      return true;
+    }
+    if (/(?:показать\s+телефон|показать\s+номер|написать\s+сообщение|написать\s+продавцу|связаться\s+с\s+продавцом)/i.test(lower)) {
+      return true;
+    }
+    if (clean.length < 50 && /(?:телефон|контакт[ы]?|сообщени[ея]|позвонить|написать)\s*[:—–-]?\s*$/i.test(lower)) {
+      return true;
+    }
+
+    // 2. Избранное, закладки, пожаловаться, поделиться, сравнение
+    if (/(?:(?:добавить\s+в\s+|удалить\s+из\s+)?избранно[ем]|в\s+закладки|поделиться|пожаловаться|к\s+сравнению|в\s+сравнени[ие])/i.test(lower)) {
+      return true;
+    }
+
+    // 3. Заказ, корзина, оформление покупки
+    if (/(?:купить\s+(?:с\s+доставкой|сейчас)|(?:добавить\s+)?в\s+корзину|перейти\s+в\s+корзину|оформить\s+заказ)/i.test(lower)) {
+      return true;
+    }
+
+    // 4. Подписка на продавца
+    if (/(?:подписаться(?:\s+на\s+продавца)?|вы\s+подписаны|в\s+подписках)/i.test(lower) && clean.length < 40) {
+      return true;
+    }
+
+    // 5. Виджеты доставки
     if (/^доставка\s+от\s+\d+/i.test(lower)) return true;
-    if (/^доставка\s+(в|по|курьером|силами)/i.test(lower) && text.length < 35) return true;
-    if (/^(только\s+доставка|самовывоз)/i.test(lower) && text.length < 35) return true;
+    if (/^доставка\s+(?:в|по|курьером|силами)/i.test(lower) && clean.length < 45) return true;
+    if (/^(?:только\s+доставка|самовывоз|авито\s+доставка|есть\s+доставка)/i.test(lower) && clean.length < 45) return true;
     if (lower === 'доставка' || lower.startsWith('доставка от')) return true;
 
-    // Dates & relative time badges
-    if (/^(сегодня|вчера|\d+\s*(день|дня|дней|минут|минуты|час|часа|часов|нед|месяц))/i.test(lower) && text.length < 30) return true;
+    // 6. Даты и относительное время
+    if (/^(?:сегодня|вчера|\d+\s*(?:день|дня|дней|минут|минуты|минуту|час|часа|часов|нед|месяц))/i.test(lower) && clean.length < 35) {
+      return true;
+    }
 
-    // Price / currency
-    if (/^\d+[\s\u00a0]*([₽р]|руб)/i.test(lower)) return true;
+    // 7. Цены и рассрочки
+    if (/^\d+[\s\u00a0]*(?:[₽р]|руб)/i.test(lower)) return true;
+    if (/^(?:цена\s*)?от\s+\d+[\s\u00a0]*(?:[₽р]|руб)/i.test(lower)) return true;
+    if (/(?:в\s*месяц|\/мес|рассрочк|взнос)/i.test(lower) && clean.length < 35) return true;
 
-    // Badges / marketing tags
-    if (/^(в наличии|рассрочка|скидка|гарантия|новинка|безопасная сделка)/i.test(lower) && text.length < 30) return true;
+    // 8. Бейджи продавца, отзывы, рейтинг
+    if (/^(?:в\s+наличии|под\s+заказ|скидка|гарантия|новинка|безопасная\s+сделка)/i.test(lower) && clean.length < 35) return true;
+    if ((/отзыв|рейтинг/i.test(lower) || /(?:документы|реквизиты)\s+проверены/i.test(lower) || /на\s+авито\s+с\s+\d+/i.test(lower)) && clean.length < 50) return true;
 
-    // Seller / rating / reviews badges
-    if ((/отзыв|рейтинг/i.test(lower) || /документы\s+проверены/i.test(lower)) && text.length < 40) return true;
+    // 9. Статусы бронирования
+    if (/^(?:зарезервирован|забронирован|заказ\s+оформлен|бронь|снято\s+с\s+публикации)/i.test(lower) && clean.length < 40) return true;
 
-    // Reserved / out of stock badge
-    if (/зарезервирован/i.test(lower) && text.length < 35) return true;
+    // 10. Только адрес / гео
+    if (/^(?:м\.|метро\s+|р-н\s+|район\s+|ул\.|улица\s+|г\.|город\s+)/i.test(lower) && clean.length < 40) return true;
+
+    // 11. Навигация
+    if (/^(?:подробнее|показать\s+ещ[её]|смотреть\s+все|следующая\s+страница)$/i.test(lower)) return true;
 
     return false;
   }
 
+  const ACTION_CONTAINER_SELECTORS = [
+    'button',
+    '[role="button"]',
+    'a',
+    '[data-marker*="phone"]',
+    '[data-marker*="contact"]',
+    '[data-marker*="messenger"]',
+    '[data-marker*="message"]',
+    '[data-marker*="chat"]',
+    '[data-marker*="favorite"]',
+    '[data-marker*="action"]',
+    '[data-marker*="cart"]',
+    '[data-marker*="delivery"]',
+    '[data-marker*="seller"]',
+    '[data-marker*="price"]',
+    '[data-marker*="title"]',
+    '[data-marker*="address"]',
+    '[data-marker*="geo"]',
+    '[data-marker*="date"]',
+    '[class*="phone"]',
+    '[class*="contact"]',
+    '[class*="messenger"]',
+    '[class*="chat"]',
+    '[class*="favorite"]',
+    '[class*="action"]',
+    '[class*="button"]',
+    '[class*="btn"]',
+    '[class*="seller"]',
+    '[class*="delivery"]',
+    '[class*="price"]',
+    '[class*="geo"]',
+    '[class*="address"]',
+    '[class*="date"]',
+  ].join(', ');
+
   function extractDOMDescription(card, title = '', price = '') {
+    if (!card) return '';
+
+    // Приоритет 1: Специфические дата-маркеры и классы описания на Авито
+    const explicitEls = card.querySelectorAll(
+      '[data-marker="item-description"], [data-marker="item-view/item-description"], ' +
+      '[data-marker*="description"], [class*="iva-item-description"], ' +
+      '[class*="item-descriptionStep"], [class*="item-description"], [itemprop="description"]'
+    );
+    for (const el of explicitEls) {
+      if (el.closest('button, [role="button"], [data-marker*="phone"], [data-marker*="contact"], [data-marker*="messenger"], [data-marker*="favorite"], [class*="phone"]')) {
+        continue;
+      }
+      const text = cleanText(el.textContent);
+      if (!isBadDescriptionText(text) && (!title || !text.includes(title)) && (!price || !text.includes(price))) {
+        return text;
+      }
+    }
+
+    // Приоритет 2: Параграфы <p>, строго изолированные от кнопок, контактов и действий
     const paragraphs = card.querySelectorAll('p');
     let bestP = '';
     for (const p of paragraphs) {
-      if (p.closest('[data-marker*="delivery"]') || p.closest('[class*="delivery"]')) continue;
-      if (p.closest('[data-marker*="seller"]') || p.closest('[class*="seller"]')) continue;
+      if (p.closest(ACTION_CONTAINER_SELECTORS)) continue;
 
       const text = cleanText(p.textContent);
       if (isBadDescriptionText(text)) continue;
@@ -524,46 +643,20 @@ const AvitoParser = (() => {
         bestP = text;
       }
     }
-    if (bestP.length > 15) return bestP;
+    if (bestP.length >= 20) return bestP;
 
-    const explicitEls = card.querySelectorAll(
-      '[data-marker="item-description"], [data-marker="item-view/item-description"], ' +
-      '[class*="iva-item-description"], [class*="item-descriptionStep"], [class*="item-description"]'
-    );
-    for (const el of explicitEls) {
-      if (el.closest('[data-marker*="delivery"]') || el.closest('[class*="delivery"]')) continue;
-      const text = cleanText(el.textContent);
-      if (!isBadDescriptionText(text) && (!title || !text.includes(title)) && (!price || !text.includes(price))) {
-        return text;
-      }
-    }
-
-    const candidates = card.querySelectorAll('div, span');
-    let bestText = '';
-
-    for (const el of candidates) {
-      if (el.children && el.children.length > 1) continue;
-      if (el.closest('[data-marker="item-price"]') || el.closest('[data-marker="item-title"]') || el.closest('a')) continue;
-      if (el.closest('[data-marker*="delivery"]') || el.closest('[class*="delivery"]')) continue;
-      if (el.closest('[data-marker*="seller"]') || el.closest('[class*="seller"]')) continue;
-
-      const text = cleanText(el.textContent);
-      if (isBadDescriptionText(text)) continue;
-      if (title && text.includes(title)) continue;
-      if (price && text.includes(price)) continue;
-
-      if (text.length > 25 && text.length > bestText.length) {
-        bestText = text;
-      }
-    }
-
-    return bestText;
+    // Если у карточки нет текста описания в сниппете выдачи, возвращаем пустую строку
+    return '';
   }
 
   function cleanSeller(str) {
     if (!str) return '';
-    let s = String(str).trim();
+    let s = cleanText(str);
+    if (/^(?:показать\s+(?:телефон|номер|контакт)|написать(?:\s+сообщение)?|позвонить|связаться|в\s+избранное|купить)/i.test(s)) {
+      return '';
+    }
     s = s.replace(/документы\s+проверены.*$/i, '');
+    s = s.replace(/реквизиты\s+проверены.*$/i, '');
     s = s.replace(/надёжный\s+продавец.*$/i, '');
     s = s.replace(/отзыв.*$/i, '');
     s = s.replace(/\d+[.,]\d+.*$/, '');
@@ -928,9 +1021,9 @@ const AvitoParser = (() => {
     );
   }
 
-  function toMarkdown(items, fields = {}) {
+  function toMarkdown(items, fields = {}, customQuery = null) {
     const opts = { ...DEFAULT_FIELDS, ...fields };
-    const query = getSearchQuery();
+    const query = customQuery || getSearchQuery();
 
     let md = '';
     if (opts.aiPrompt) {
@@ -991,7 +1084,7 @@ const AvitoParser = (() => {
     return md;
   }
 
-  function toJSON(items, fields = {}) {
+  function toJSON(items, fields = {}, customQuery = null) {
     const opts = { ...DEFAULT_FIELDS, ...fields };
 
     const filteredItems = items.map((item, i) => {
@@ -1024,7 +1117,7 @@ const AvitoParser = (() => {
     });
 
     return JSON.stringify({
-      query: getSearchQuery(),
+      query: customQuery || getSearchQuery(),
       count: items.length,
       parsedAt: new Date().toISOString(),
       items: filteredItems,
@@ -1041,9 +1134,9 @@ const AvitoParser = (() => {
     return str;
   }
 
-  function toTSV(items, fields = {}) {
+  function toTSV(items, fields = {}, customQuery = null) {
     const opts = { ...DEFAULT_FIELDS, ...fields };
-    const query = getSearchQuery();
+    const query = customQuery || getSearchQuery();
 
     let prefix = '';
     if (opts.aiPrompt) {
@@ -1072,8 +1165,8 @@ const AvitoParser = (() => {
     return prefix + [headers.join('\t'), ...rows].join('\n');
   }
 
-  function toCSV(items, fields = {}) {
-    return toTSV(items, fields);
+  function toCSV(items, fields = {}, customQuery = null) {
+    return toTSV(items, fields, customQuery);
   }
 
   return {
@@ -1089,8 +1182,12 @@ const AvitoParser = (() => {
     cleanText,
     cleanTitle,
     cleanSeller,
+    cleanDate,
     extractIdFromUrl,
     extractNumericPrice,
+    extractDescription,
+    isBadDescriptionText,
+    normalizeNextDataItem,
     extractDOMPrice,
     extractDOMPriceInfo,
     extractDOMDescription,

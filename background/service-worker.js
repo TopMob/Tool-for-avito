@@ -7,8 +7,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'PARSE_RESULT') {
     const data = msg.data;
 
-    // Сохраняем последний результат в локальное хранилище
-    chrome.storage.local.set({ lastParse: data }).catch(() => { });
+    // Сохраняем последний результат и сессию в локальное хранилище
+    chrome.storage.local.set({ savedSession: data, lastParse: data }).catch(() => { });
 
     // Обновляем бейдж на иконке для текущей вкладки
     if (data && typeof data.count === 'number' && data.count > 0) {
