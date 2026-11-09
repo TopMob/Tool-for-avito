@@ -23,9 +23,10 @@ const AvitoParser = (() => {
     try {
       const full = url.startsWith('http') ? url : `https://www.avito.ru${url}`;
       const u = new URL(full, typeof window !== 'undefined' ? window.location.origin : 'https://www.avito.ru');
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
       return `${u.origin}${u.pathname}`;
     } catch {
-      return (url.startsWith('http') ? url : `https://www.avito.ru${url}`).split('?')[0].split('#')[0];
+      return '';
     }
   }
 
@@ -56,6 +57,17 @@ const AvitoParser = (() => {
     if (typeof rawPrice === 'number') return Math.round(rawPrice);
     let str = String(rawPrice).trim();
     if (!str) return null;
+    if (/бесплатно|даром/i.test(str)) return 0;
+
+    // Remove prefixes like "от", "до", "цена"
+    str = str.replace(/^(?:цена\s*)?от\s+/i, '');
+
+    // Prevent Range Explosion: "от 1 500 до 3 000 ₽" or "1 500 – 3 000 ₽"
+    const rangeMatch = str.match(/^([\d\s\u00a0]+)(?:–|-|—|\.{2,}|до)\s*[\d\s\u00a0]+/i);
+    if (rangeMatch && rangeMatch[1]) {
+      const digits = rangeMatch[1].replace(/[^\d]/g, '');
+      if (digits) return parseInt(digits, 10);
+    }
 
     // Pattern for discounted or concatenated prices e.g. "2 530 ₽4 600 ₽ -45%" or "2 530 ₽ 4 600 ₽"
     const firstPart = str.match(/^([\d\s\u00a0]+)(?:₽|руб\.?|р\.?|$)/i);
@@ -71,17 +83,25 @@ const AvitoParser = (() => {
   function cleanPrice(rawPrice) {
     if (!rawPrice) return '';
     let str = String(rawPrice).trim();
+    if (/бесплатно|даром/i.test(str)) return 'Бесплатно';
+
+    // Retain rental/unit period (e.g. в сутки, / мес., / сут., / м²)
+    let period = '';
+    const periodMatch = str.match(/(?:в\s*(?:сутки|день|месяц|час)|\/(?:сут(?:ки|\.)?|мес(?:яц|\.)?|ч(?:ас|\.)?|м²|сот))/i);
+    if (periodMatch) {
+      period = ' ' + periodMatch[0].trim();
+    }
 
     // Avito discount pattern: "2 530 ₽4 600 ₽ -45%" or "2 530 ₽ 4 600 ₽ -45%"
     const matchCurrency = str.match(/^([\d\s\u00a0]+(?:₽|руб\.?|р\.?))/i);
     if (matchCurrency) {
-      return matchCurrency[1].trim().replace(/\s+/g, ' ');
+      return matchCurrency[1].trim().replace(/\s+/g, ' ') + period;
     }
 
     const matchDigits = str.match(/^([\d\s\u00a0]{2,})/);
     if (matchDigits) {
       const val = matchDigits[1].trim().replace(/\s+/g, ' ');
-      if (val) return `${val} ₽`;
+      if (val) return `${val} ₽${period}`;
     }
 
     return str.replace(/\s+/g, ' ');
@@ -165,11 +185,17 @@ const AvitoParser = (() => {
     if (depth > 8 || !obj || typeof obj !== 'object') return null;
 
     if (Array.isArray(obj)) {
-      if (obj.length > 2 && obj[0] && typeof obj[0] === 'object') {
-        const keys = Object.keys(obj[0]);
-        const hasTitle = keys.some(k => /title|name/i.test(k));
-        const hasPrice = keys.some(k => /price|cost/i.test(k));
-        if (hasTitle && hasPrice) return obj;
+      if (obj.length > 0) {
+        // Find if any item in the array has title and price keys (ignore promotional banners)
+        const sample = obj.find(it => it && typeof it === 'object' && !it.isBanner && !it.banner);
+        if (sample) {
+          const keys = Object.keys(sample);
+          const hasTitle = keys.some(k => /title|name/i.test(k));
+          const hasPrice = keys.some(k => /price|cost/i.test(k));
+          if (hasTitle && hasPrice) {
+            return obj.filter(it => it && typeof it === 'object' && !it.isBanner && !it.banner);
+          }
+        }
       }
       for (const item of obj) {
         const result = deepFindItems(item, depth + 1);
@@ -866,8 +892,17 @@ const AvitoParser = (() => {
   // Formatters
 
   function getSearchQuery() {
-    const params = new URLSearchParams(window.location.search);
-    return params.get('q') || document.title.replace(/ - .*/g, '').trim() || 'Авито';
+    try {
+      if (typeof window !== 'undefined' && window.location) {
+        const params = new URLSearchParams(window.location.search);
+        const q = params.get('q');
+        if (q) return q;
+      }
+      if (typeof document !== 'undefined' && document.title) {
+        return document.title.replace(/ - .*/g, '').trim() || 'Авито';
+      }
+    } catch {}
+    return 'Авито';
   }
 
   function buildAiPrompt(query, count, opts) {
@@ -998,7 +1033,12 @@ const AvitoParser = (() => {
 
   function sanitizeTsvCell(val) {
     if (val == null) return '';
-    return String(val).replace(/[\r\n\t]+/g, ' ').trim();
+    let str = String(val).replace(/[\r\n\t]+/g, ' ').trim();
+    // Protect against CSV/TSV formula injection (CWE-1236)
+    if (/^[=+\-@]/.test(str)) {
+      str = "'" + str;
+    }
+    return str;
   }
 
   function toTSV(items, fields = {}) {
@@ -1007,9 +1047,7 @@ const AvitoParser = (() => {
 
     let prefix = '';
     if (opts.aiPrompt) {
-      prefix = buildAiPrompt(query, items.length, opts);
-    } else {
-      prefix = `Список объявлений с Авито по запросу "${query}" (${items.length} шт.):\n\n`;
+      prefix = buildAiPrompt(query, items.length, opts) + '\n';
     }
 
     const columns = [

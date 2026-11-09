@@ -1,30 +1,36 @@
 /**
- * Service Worker — фоновая координация расширения.
+ * Service Worker — фоновая координация расширения Tool for Avito.
  */
 
-// Сохраняем результаты парсинга
+// Обработка сообщений от контентных скриптов и попапа
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'PARSE_RESULT') {
     const data = msg.data;
 
-    // Сохраняем последний результат
-    chrome.storage.local.set({ lastParse: data });
+    // Сохраняем последний результат в локальное хранилище
+    chrome.storage.local.set({ lastParse: data }).catch(() => { });
 
-    // Обновляем бейдж на иконке
-    if (data.count > 0) {
-      chrome.action.setBadgeText({ text: String(data.count), tabId: sender.tab?.id });
-      chrome.action.setBadgeBackgroundColor({ color: '#6c5ce7', tabId: sender.tab?.id });
+    // Обновляем бейдж на иконке для текущей вкладки
+    if (data && typeof data.count === 'number' && data.count > 0) {
+      const badgeOpts = { text: String(data.count) };
+      const colorOpts = { color: '#6c5ce7' };
+
+      if (sender.tab && typeof sender.tab.id === 'number') {
+        badgeOpts.tabId = sender.tab.id;
+        colorOpts.tabId = sender.tab.id;
+      }
+
+      chrome.action.setBadgeText(badgeOpts).catch(() => { });
+      chrome.action.setBadgeBackgroundColor(colorOpts).catch(() => { });
     }
 
     sendResponse({ ok: true });
   }
-
-  return true;
 });
 
-// Очищаем бейдж при навигации
+// Очищаем бейдж при перезагрузке или навигации вкладки
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === 'loading') {
-    chrome.action.setBadgeText({ text: '', tabId });
+    chrome.action.setBadgeText({ text: '', tabId }).catch(() => { });
   }
 });

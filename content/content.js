@@ -41,6 +41,19 @@
   const ICON_PARSE = `<svg class="ap-fab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
   const ICON_LOADING = `<svg class="ap-fab-icon ap-spin-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>`;
 
+  function setSvgIcon(element, svgString) {
+    if (!element) return;
+    try {
+      const doc = new DOMParser().parseFromString(svgString, 'image/svg+xml');
+      const svg = doc.documentElement;
+      if (svg && svg.tagName.toLowerCase() === 'svg') {
+        element.replaceChildren(svg);
+        return;
+      }
+    } catch {}
+    element.textContent = '';
+  }
+
   function init() {
     if (document.getElementById(SHADOW_HOST_ID)) return;
 
@@ -80,7 +93,7 @@
   function createFAB() {
     fabEl = document.createElement('button');
     fabEl.className = 'ap-fab';
-    fabEl.innerHTML = ICON_PARSE;
+    setSvgIcon(fabEl, ICON_PARSE);
     fabEl.title = 'Собрать объявления (Alt+P)';
     fabEl.addEventListener('click', handleParse);
     shadowRoot.appendChild(fabEl);
@@ -92,7 +105,7 @@
     panelEl.innerHTML = `
       <div class="ap-header">
         <div class="ap-header-top">
-          <h2>Avito Parser</h2>
+          <h2>Tool for Avito</h2>
           <div class="ap-header-actions">
             <button class="ap-header-btn" id="ap-toggle-filters" title="Скрыть/показать фильтры и поля">Фильтры ▾</button>
             <button class="ap-close" title="Закрыть (Esc)">✕</button>
@@ -442,19 +455,20 @@
     if (!displayItems || displayItems.length === 0) return [];
 
     const incTerms = filterInclude
-      .split(/[,;]+|\s+/)
+      .split(/[,;]+/)
       .map(t => t.trim().toLowerCase())
       .filter(Boolean);
 
     const excTerms = filterExclude
-      .split(/[,;]+|\s+/)
+      .split(/[,;]+/)
       .map(t => t.trim().toLowerCase())
       .filter(Boolean);
 
     const hasFilters = !!searchQuery || filterDelivery !== 'all' || hideReserved || incTerms.length > 0 || excTerms.length > 0;
     if (!hasFilters) return displayItems;
 
-    const numMatch = searchQuery ? searchQuery.match(/^(?:№|#|номер\s*|no\s*|лот\s*|lot\s*)?(\d+)$/i) : null;
+    // Explicit prefix required for jumping to lot number: №11, #11, лот 11, lot 11
+    const numMatch = searchQuery ? searchQuery.match(/^(?:№|#|номер\s*|no\s*|лот\s*|lot\s+)(\d+)$/i) : null;
     const targetNum = numMatch ? parseInt(numMatch[1], 10) : null;
 
     return displayItems.filter(item => {
@@ -476,7 +490,7 @@
         `лот${item.itemNum}`,
         `#${item.itemNum}`,
         item.title,
-        String(item.priceNum || ''),
+        String(item.priceNum != null ? item.priceNum : ''),
         item.price,
         item.oldPrice || '',
         item.discount || '',
@@ -572,32 +586,56 @@
     }, 1000);
   }
 
+  function renderSkeleton(container) {
+    if (!container) return;
+    const list = document.createElement('div');
+    list.className = 'ap-skeleton-list';
+
+    for (let i = 0; i < 5; i++) {
+      const card = document.createElement('div');
+      card.className = 'ap-skeleton-card';
+
+      const controls = document.createElement('div');
+      controls.className = 'ap-skeleton-controls';
+      const c1 = document.createElement('div'); c1.className = 'ap-skel ap-skel-check';
+      const c2 = document.createElement('div'); c2.className = 'ap-skel ap-skel-num';
+      controls.append(c1, c2);
+
+      const thumb = document.createElement('div');
+      thumb.className = 'ap-skeleton-thumb ap-skel';
+
+      const body = document.createElement('div');
+      body.className = 'ap-skeleton-body';
+      ['title', 'price', 'desc', 'desc ap-skel-desc-short', 'meta'].forEach(cls => {
+        const d = document.createElement('div');
+        d.className = `ap-skel ap-skel-${cls}`;
+        body.appendChild(d);
+      });
+
+      card.append(controls, thumb, body);
+      list.appendChild(card);
+    }
+
+    container.replaceChildren(list);
+  }
+
+  function getInitialPage() {
+    try {
+      const p = new URL(window.location.href).searchParams.get('p');
+      const num = parseInt(p, 10);
+      return (!isNaN(num) && num > 0) ? num : 1;
+    } catch {
+      return 1;
+    }
+  }
+
   // Parse
   function handleParse() {
     fabEl.classList.add('ap-loading');
-    fabEl.innerHTML = ICON_LOADING;
+    setSvgIcon(fabEl, ICON_LOADING);
 
     const cardsEl = panelEl.querySelector('#ap-cards');
-    cardsEl.innerHTML = `
-      <div class="ap-skeleton-list">
-        ${Array.from({ length: 5 }, () => `
-          <div class="ap-skeleton-card">
-            <div class="ap-skeleton-controls">
-              <div class="ap-skel ap-skel-check"></div>
-              <div class="ap-skel ap-skel-num"></div>
-            </div>
-            <div class="ap-skeleton-thumb ap-skel"></div>
-            <div class="ap-skeleton-body">
-              <div class="ap-skel ap-skel-title"></div>
-              <div class="ap-skel ap-skel-price"></div>
-              <div class="ap-skel ap-skel-desc"></div>
-              <div class="ap-skel ap-skel-desc ap-skel-desc-short"></div>
-              <div class="ap-skel ap-skel-meta"></div>
-            </div>
-          </div>
-        `).join('')}
-      </div>
-    `;
+    renderSkeleton(cardsEl);
     openPanel();
 
     setTimeout(() => {
@@ -606,7 +644,7 @@
         lastParsedUrl = getSearchKey(); // запоминаем ключ поиска
         hideParseBanner();
         startUrlWatch(); // запускаем слежение (если ещё не запущено)
-        pagesLoaded = 1;
+        pagesLoaded = getInitialPage();
         loadingPages = false;
         isLoadingAll = false;
         abortLoadingAll = false;
@@ -654,13 +692,13 @@
             url: window.location.href,
             parsedAt: new Date().toISOString(),
           },
-        });
+        }).catch(() => {});
       } catch (err) {
         renderError(err);
       }
 
       fabEl.classList.remove('ap-loading');
-      fabEl.innerHTML = ICON_PARSE;
+      setSvgIcon(fabEl, ICON_PARSE);
     }, 150);
   }
 
@@ -747,9 +785,15 @@
     const selectedVisibleCount = visible.filter((item) => selectedIndices.has(item.itemNum)).length;
 
     if (info) {
-      info.innerHTML = selectedVisibleCount > 0
-        ? `Выбрано: <strong>${selectedVisibleCount}</strong> из ${visibleTotal}`
-        : `Выбрано: 0 из ${visibleTotal}`;
+      info.textContent = 'Выбрано: ';
+      if (selectedVisibleCount > 0) {
+        const strong = document.createElement('strong');
+        strong.textContent = String(selectedVisibleCount);
+        info.appendChild(strong);
+        info.appendChild(document.createTextNode(` из ${visibleTotal}`));
+      } else {
+        info.appendChild(document.createTextNode(`0 из ${visibleTotal}`));
+      }
     }
 
     if (selectAllBtn && deselectAllBtn) {
@@ -780,9 +824,19 @@
 
     try {
       const html = await fetchPage(nextUrl);
-      const newItems = parseHTMLForItems(html);
 
-      if (newItems.length === 0) {
+      if (html.includes('firewall') || html.includes('captcha') || html.includes('Доступ ограничен')) {
+        btn.textContent = 'Проверка / Капча';
+        showToast('Авито запросил проверку');
+        loadingPages = false;
+        return;
+      }
+
+      const newItems = parseHTMLForItems(html);
+      const existingIds = new Set((lastResult?.items || []).map(it => it.id).filter(Boolean));
+      const uniqueNewItems = newItems.filter(it => !it.id || !existingIds.has(it.id));
+
+      if (uniqueNewItems.length === 0) {
         btn.textContent = 'Страниц больше нет';
         btn.disabled = true;
         if (btnAll) {
@@ -793,10 +847,10 @@
         return;
       }
 
-      newItems.forEach((item, idx) => {
+      uniqueNewItems.forEach((item, idx) => {
         item.itemNum = lastResult.items.length + idx + 1;
       });
-      lastResult.items.push(...newItems);
+      lastResult.items.push(...uniqueNewItems);
       pagesLoaded = nextPage;
 
       applySortAndRender();
@@ -862,10 +916,19 @@
           break;
         }
 
+        if (html.includes('firewall') || html.includes('captcha') || html.includes('Доступ ограничен')) {
+          btnLoadAll.textContent = 'Проверка / Капча';
+          showToast('Авито запросил проверку');
+          break;
+        }
+
         if (abortLoadingAll) break;
 
         const newItems = parseHTMLForItems(html);
-        if (newItems.length === 0) {
+        const existingIds = new Set((lastResult?.items || []).map(it => it.id).filter(Boolean));
+        const uniqueNewItems = newItems.filter(it => !it.id || !existingIds.has(it.id));
+
+        if (uniqueNewItems.length === 0) {
           btnLoadAll.textContent = 'Все загружены';
           btnLoadAll.disabled = true;
           if (btnLoadMore) {
@@ -876,10 +939,10 @@
           break;
         }
 
-        newItems.forEach((item, idx) => {
+        uniqueNewItems.forEach((item, idx) => {
           item.itemNum = lastResult.items.length + idx + 1;
         });
-        lastResult.items.push(...newItems);
+        lastResult.items.push(...uniqueNewItems);
         pagesLoaded = nextPage;
 
         applySortAndRender();
@@ -888,8 +951,8 @@
 
         if (abortLoadingAll) break;
 
-        // Защитная пауза между страницами для предотвращения капчи и rate-limit от Авито
-        await new Promise(r => setTimeout(r, 1200));
+        // Защитная пауза с джиттером между страницами
+        await new Promise(r => setTimeout(r, 1200 + Math.random() * 600));
       }
     } finally {
       loadingPages = false;
@@ -1112,31 +1175,69 @@
       .map(i => i.priceNum)
       .filter(p => typeof p === 'number' && !isNaN(p) && p > 0);
 
-    let priceStatsHtml = '';
+    const statsFragment = document.createDocumentFragment();
+
+    // 1. Count
+    const total = lastResult.items.length;
+    const isFiltered = list.length !== total;
+    const countStat = document.createElement('span');
+    countStat.className = 'ap-stat';
+    countStat.appendChild(document.createTextNode('Найдено: '));
+    const strongCount = document.createElement('strong');
+    strongCount.textContent = String(isFiltered ? list.length : total);
+    countStat.appendChild(strongCount);
+    if (isFiltered) {
+      const sub = document.createElement('span');
+      sub.className = 'ap-stat-sub';
+      sub.textContent = ` из ${total}`;
+      countStat.appendChild(sub);
+    }
+    statsFragment.appendChild(countStat);
+
+    // 2. Query
+    const query = AvitoParser.getSearchQuery() || '—';
+    const queryStat = document.createElement('span');
+    queryStat.className = 'ap-stat';
+    queryStat.title = query;
+    queryStat.appendChild(document.createTextNode('Запрос: '));
+    const strongQuery = document.createElement('strong');
+    strongQuery.textContent = query;
+    queryStat.appendChild(strongQuery);
+    statsFragment.appendChild(queryStat);
+
+    // 3. Pages
+    const pageStat = document.createElement('span');
+    pageStat.className = 'ap-stat';
+    pageStat.appendChild(document.createTextNode('Стр: '));
+    const strongPage = document.createElement('strong');
+    strongPage.textContent = String(pagesLoaded);
+    pageStat.appendChild(strongPage);
+    statsFragment.appendChild(pageStat);
+
+    // 4. Prices
     if (prices.length > 0) {
       const minPrice = Math.min(...prices);
       const maxPrice = Math.max(...prices);
       const avgPrice = Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
       const fmt = (n) => n.toLocaleString('ru-RU') + ' ₽';
-      priceStatsHtml = `
-        <span class="ap-stat ap-stat-price" title="Минимальная цена">Мин: <strong>${fmt(minPrice)}</strong></span>
-        <span class="ap-stat ap-stat-price" title="Средняя цена">Ср: <strong>${fmt(avgPrice)}</strong></span>
-        <span class="ap-stat ap-stat-price" title="Максимальная цена">Макс: <strong>${fmt(maxPrice)}</strong></span>
-      `;
+
+      const createPriceStat = (label, value, title) => {
+        const s = document.createElement('span');
+        s.className = 'ap-stat ap-stat-price';
+        s.title = title;
+        s.appendChild(document.createTextNode(`${label}: `));
+        const st = document.createElement('strong');
+        st.textContent = fmt(value);
+        s.appendChild(st);
+        return s;
+      };
+
+      statsFragment.appendChild(createPriceStat('Мин', minPrice, 'Минимальная цена'));
+      statsFragment.appendChild(createPriceStat('Ср', avgPrice, 'Средняя цена'));
+      statsFragment.appendChild(createPriceStat('Макс', maxPrice, 'Максимальная цена'));
     }
 
-    const total = lastResult.items.length;
-    const isFiltered = list.length !== total;
-    const countText = isFiltered
-      ? `Найдено: <strong>${list.length}</strong> <span class="ap-stat-sub">из ${total}</span>`
-      : `Найдено: <strong>${total}</strong>`;
-
-    statsEl.innerHTML = `
-      <span class="ap-stat">${countText}</span>
-      <span class="ap-stat" title="${esc(AvitoParser.getSearchQuery())}">Запрос: <strong>${esc(AvitoParser.getSearchQuery()) || '—'}</strong></span>
-      <span class="ap-stat">Стр: <strong>${pagesLoaded}</strong></span>
-      ${priceStatsHtml}
-    `;
+    statsEl.replaceChildren(statsFragment);
   }
 
   // Render
@@ -1152,19 +1253,26 @@
     if (!lastResult || lastResult.items.length === 0) {
       const toggleFiltersBtn = panelEl.querySelector('#ap-toggle-filters');
       if (toggleFiltersBtn) toggleFiltersBtn.style.display = 'none';
-      statsEl.innerHTML = '';
-      searchBar.style.display = 'none';
+      if (statsEl) statsEl.textContent = '';
+      if (searchBar) searchBar.style.display = 'none';
       if (filtersBar) filtersBar.style.display = 'none';
-      toolbar.style.display = 'none';
-      fieldsBar.style.display = 'none';
-      exportRow.style.display = 'none';
-      panelEl.querySelector('#ap-cards').innerHTML = `
-        <div class="ap-empty">
-          <h3>Объявления не найдены</h3>
-          <p>Проверь, что ты на странице поиска Авито<br>с результатами, и попробуй ещё раз</p>
-        </div>
-      `;
-      footerEl.textContent = '';
+      if (toolbar) toolbar.style.display = 'none';
+      if (fieldsBar) fieldsBar.style.display = 'none';
+      if (exportRow) exportRow.style.display = 'none';
+
+      const emptyDiv = document.createElement('div');
+      emptyDiv.className = 'ap-empty';
+      const h3 = document.createElement('h3');
+      h3.textContent = 'Объявления не найдены';
+      const p = document.createElement('p');
+      p.appendChild(document.createTextNode('Проверь, что ты на странице поиска Авито'));
+      p.appendChild(document.createElement('br'));
+      p.appendChild(document.createTextNode('с результатами, и попробуй ещё раз'));
+      emptyDiv.append(h3, p);
+
+      const cardsContainer = panelEl.querySelector('#ap-cards');
+      if (cardsContainer) cardsContainer.replaceChildren(emptyDiv);
+      if (footerEl) footerEl.textContent = '';
       return;
     }
 
@@ -1186,34 +1294,249 @@
       btnLoadAll.classList.remove('ap-btn-stop');
     }
 
-    searchBar.style.display = 'flex';
+    if (searchBar) searchBar.style.display = 'flex';
     if (filtersBar) filtersBar.style.display = filtersCollapsed ? 'none' : 'flex';
-    toolbar.style.display = 'flex';
+    if (toolbar) toolbar.style.display = 'flex';
     if (fieldsBar) fieldsBar.style.display = filtersCollapsed ? 'none' : 'flex';
-    exportRow.style.display = 'flex';
+    if (exportRow) exportRow.style.display = 'flex';
     syncFieldsUI();
     updatePageInfo();
     renderCards(getFilteredItems());
     updateSelectionInfo();
     updateSearchCount();
 
-    footerEl.innerHTML = `
-      Источник: <span class="ap-source-tag">${lastResult.source}</span> · ${new Date().toLocaleTimeString('ru-RU')}
-    `;
+    if (footerEl) {
+      footerEl.textContent = 'Источник: ';
+      const srcTag = document.createElement('span');
+      srcTag.className = 'ap-source-tag';
+      srcTag.textContent = lastResult.source || '';
+      footerEl.appendChild(srcTag);
+      footerEl.appendChild(document.createTextNode(` · ${new Date().toLocaleTimeString('ru-RU')}`));
+    }
+  }
+
+  function createCardElement(item, renderIdx, minPrice, isSelected) {
+    const card = document.createElement('div');
+    card.className = `ap-card ${isSelected ? 'ap-card-selected' : ''}`;
+    card.dataset.cardNum = String(item.itemNum);
+    card.style.setProperty('--ap-card-delay', `${Math.min(renderIdx, 20) * 25}ms`);
+
+    // 1. Controls
+    const controls = document.createElement('div');
+    controls.className = 'ap-card-controls';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'ap-card-check';
+    checkbox.checked = isSelected;
+    checkbox.setAttribute('tabindex', '0');
+    checkbox.setAttribute('aria-label', `Выбрать объявление ${item.itemNum}`);
+    checkbox.addEventListener('change', () => {
+      toggleSelection(item.itemNum);
+    });
+
+    const cardNum = document.createElement('span');
+    cardNum.className = 'ap-card-num';
+    cardNum.textContent = `№${item.itemNum}`;
+
+    controls.append(checkbox, cardNum);
+    card.appendChild(controls);
+
+    // 2. Thumb
+    const hasImage = item.image && /^https?:\/\//i.test(item.image);
+    if (hasImage) {
+      const thumb = document.createElement('div');
+      thumb.className = 'ap-card-thumb';
+      const img = document.createElement('img');
+      img.src = item.image;
+      img.alt = '';
+      img.loading = 'lazy';
+      thumb.appendChild(img);
+      card.appendChild(thumb);
+    }
+
+    // 3. Body
+    const body = document.createElement('div');
+    body.className = 'ap-card-body';
+
+    // Title row
+    const titleRow = document.createElement('div');
+    titleRow.className = 'ap-card-title-row';
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'ap-card-title';
+
+    const safeUrl = (item.url && /^https?:\/\//i.test(item.url)) ? item.url : null;
+    if (safeUrl) {
+      const link = document.createElement('a');
+      link.href = safeUrl;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = item.title || 'Без названия';
+      titleEl.appendChild(link);
+    } else {
+      titleEl.textContent = item.title || 'Без названия';
+    }
+    titleRow.appendChild(titleEl);
+
+    if (safeUrl) {
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'ap-card-copy-url';
+      copyBtn.title = 'Скопировать ссылку';
+      copyBtn.setAttribute('aria-label', 'Скопировать ссылку');
+      setSvgIcon(copyBtn, `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`);
+      copyBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(safeUrl);
+          showToast('✓ Ссылка скопирована');
+        } catch {
+          showToast('Не удалось скопировать');
+        }
+      });
+      titleRow.appendChild(copyBtn);
+    }
+    body.appendChild(titleRow);
+
+    // Price row
+    const priceRow = document.createElement('div');
+    priceRow.className = 'ap-card-price-row';
+
+    const priceSpan = document.createElement('span');
+    priceSpan.className = 'ap-card-price';
+    priceSpan.textContent = item.price || 'Цена не указана';
+    priceRow.appendChild(priceSpan);
+
+    if (item.oldPrice) {
+      const oldPriceSpan = document.createElement('span');
+      oldPriceSpan.className = 'ap-card-old-price';
+      oldPriceSpan.title = 'Старая цена';
+      oldPriceSpan.textContent = item.oldPrice;
+      priceRow.appendChild(oldPriceSpan);
+    }
+
+    if (item.discount) {
+      const discountSpan = document.createElement('span');
+      discountSpan.className = 'ap-card-discount';
+      discountSpan.title = 'Скидка';
+      discountSpan.textContent = item.discount;
+      priceRow.appendChild(discountSpan);
+    }
+    body.appendChild(priceRow);
+
+    // Description
+    if (item.description) {
+      const descEl = document.createElement('div');
+      descEl.className = 'ap-card-desc';
+      descEl.textContent = item.description;
+      body.appendChild(descEl);
+    }
+
+    // Meta badges
+    const metaContainer = document.createElement('div');
+    metaContainer.className = 'ap-card-meta';
+    const metaNodes = [];
+
+    const isBestPrice = minPrice !== null && item.priceNum === minPrice;
+    if (isBestPrice) {
+      const b = document.createElement('span');
+      b.className = 'ap-badge-best-price';
+      b.title = 'Самая выгодная цена в текущей подборке';
+      b.textContent = '★ Лучшая цена';
+      metaNodes.push(b);
+    }
+
+    if (item.isReserved) {
+      const b = document.createElement('span');
+      b.className = 'ap-badge-reserved';
+      b.title = 'Товар зарезервирован';
+      b.textContent = 'Зарезервирован';
+      metaNodes.push(b);
+    }
+
+    if (item.hasDelivery) {
+      const b = document.createElement('span');
+      b.className = 'ap-badge-delivery';
+      b.title = item.deliveryText || 'Доступна Авито Доставка';
+      b.textContent = `🚚 ${item.deliveryText || 'Доставка'}`;
+      metaNodes.push(b);
+    }
+
+    if (item.isPromoted) {
+      const b = document.createElement('span');
+      b.className = 'ap-badge-promoted';
+      b.title = 'Продвигаемое объявление';
+      b.textContent = 'Продвинуто ⬆';
+      metaNodes.push(b);
+    }
+
+    if (item.location) {
+      const s = document.createElement('span');
+      s.className = 'ap-card-meta-item';
+      s.textContent = item.location;
+      metaNodes.push(s);
+    }
+
+    if (item.date) {
+      const s = document.createElement('span');
+      s.className = 'ap-card-meta-item';
+      s.textContent = item.date;
+      metaNodes.push(s);
+    }
+
+    if (item.seller) {
+      const s = document.createElement('span');
+      s.className = 'ap-card-meta-item';
+      s.textContent = item.seller;
+      if (item.sellerRating) {
+        const rating = document.createElement('span');
+        rating.className = 'ap-card-rating';
+        rating.title = item.sellerReviews || 'Рейтинг';
+        rating.textContent = ` ★ ${item.sellerRating}`;
+        s.appendChild(rating);
+      }
+      metaNodes.push(s);
+    }
+
+    metaNodes.forEach((node, idx) => {
+      if (idx > 0) {
+        metaContainer.appendChild(document.createTextNode(' · '));
+      }
+      metaContainer.appendChild(node);
+    });
+
+    if (metaNodes.length > 0) {
+      body.appendChild(metaContainer);
+    }
+
+    card.appendChild(body);
+
+    // Click on card row toggles checkbox (excluding links & buttons)
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('a') || e.target.closest('.ap-card-check') || e.target.closest('.ap-card-copy-url')) return;
+      toggleSelection(item.itemNum);
+    });
+
+    return card;
   }
 
   function renderCards(items) {
     const cardsEl = panelEl.querySelector('#ap-cards');
+    if (!cardsEl) return;
 
     updateStats(items);
 
     if (items.length === 0) {
-      cardsEl.innerHTML = `
-        <div class="ap-empty">
-          <h3>Ничего не найдено</h3>
-          <p>По заданным фильтрам и поиску объявлений нет.<br>Попробуй изменить фильтры или сбросить их.</p>
-        </div>
-      `;
+      const emptyDiv = document.createElement('div');
+      emptyDiv.className = 'ap-empty';
+      const h3 = document.createElement('h3');
+      h3.textContent = 'Ничего не найдено';
+      const p = document.createElement('p');
+      p.appendChild(document.createTextNode('По заданным фильтрам и поиску объявлений нет.'));
+      p.appendChild(document.createElement('br'));
+      p.appendChild(document.createTextNode('Попробуй изменить фильтры или сбросить их.'));
+      emptyDiv.append(h3, p);
+      cardsEl.replaceChildren(emptyDiv);
       return;
     }
 
@@ -1222,100 +1545,14 @@
       .filter(p => typeof p === 'number' && !isNaN(p) && p > 0);
     const minPrice = validPrices.length > 1 ? Math.min(...validPrices) : null;
 
-    cardsEl.innerHTML = items.map((item, renderIdx) => {
-      const hasImage = item.image && item.image.startsWith('http');
+    const fragment = document.createDocumentFragment();
+    items.forEach((item, renderIdx) => {
       const isSelected = selectedIndices.has(item.itemNum);
-      const isBestPrice = minPrice !== null && item.priceNum === minPrice;
-
-      let sellerMeta = '';
-      if (item.seller) {
-        const ratingHtml = item.sellerRating
-          ? ` <span class="ap-card-rating" title="${esc(item.sellerReviews || 'Рейтинг')}">★ ${esc(item.sellerRating)}</span>`
-          : '';
-        sellerMeta = `<span class="ap-card-meta-item">${esc(item.seller)}${ratingHtml}</span>`;
-      }
-
-      const meta = [
-        isBestPrice ? `<span class="ap-badge-best-price" title="Самая выгодная цена в текущей подборке">★ Лучшая цена</span>` : '',
-        item.isReserved ? `<span class="ap-badge-reserved" title="Товар зарезервирован">Зарезервирован</span>` : '',
-        item.hasDelivery ? `<span class="ap-badge-delivery" title="${esc(item.deliveryText || 'Доступна Авито Доставка')}">🚚 ${esc(item.deliveryText || 'Доставка')}</span>` : '',
-        item.isPromoted ? `<span class="ap-badge-promoted" title="Продвигаемое объявление">Продвинуто ⬆</span>` : '',
-        item.location ? `<span class="ap-card-meta-item">${esc(item.location)}</span>` : '',
-        item.date ? `<span class="ap-card-meta-item">${esc(item.date)}</span>` : '',
-        sellerMeta,
-      ].filter(Boolean).join(' · ');
-
-      const priceHtml = `
-        <div class="ap-card-price-row">
-          <span class="ap-card-price">${esc(item.price || 'Цена не указана')}</span>
-          ${item.oldPrice ? `<span class="ap-card-old-price" title="Старая цена">${esc(item.oldPrice)}</span>` : ''}
-          ${item.discount ? `<span class="ap-card-discount" title="Скидка">${esc(item.discount)}</span>` : ''}
-        </div>
-      `;
-
-      return `
-        <div class="ap-card ${isSelected ? 'ap-card-selected' : ''}" data-card-num="${item.itemNum}" style="--ap-card-delay:${Math.min(renderIdx, 20) * 25}ms">
-          <div class="ap-card-controls">
-            <input type="checkbox" class="ap-card-check" ${isSelected ? 'checked' : ''} tabindex="0" aria-label="Выбрать объявление ${item.itemNum}">
-            <span class="ap-card-num">№${item.itemNum}</span>
-          </div>
-          ${hasImage
-            ? `<div class="ap-card-thumb"><img src="${esc(item.image)}" alt="" loading="lazy"></div>`
-            : ''}
-          <div class="ap-card-body">
-            <div class="ap-card-title-row">
-              <div class="ap-card-title">${item.url
-                ? `<a href="${esc(item.url)}" target="_blank" rel="noopener">${esc(item.title || 'Без названия')}</a>`
-                : esc(item.title || 'Без названия')}</div>
-              ${item.url ? `
-                <button class="ap-card-copy-url" data-url="${esc(item.url)}" title="Скопировать ссылку" aria-label="Скопировать ссылку">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="9" y="9" width="13" height="13" rx="2"></rect>
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                  </svg>
-                </button>
-              ` : ''}
-            </div>
-            ${priceHtml}
-            ${item.description ? `<div class="ap-card-desc">${esc(item.description)}</div>` : ''}
-            ${meta ? `<div class="ap-card-meta">${meta}</div>` : ''}
-          </div>
-        </div>
-      `;
-    }).join('');
-
-    // Bind copy URL buttons
-    cardsEl.querySelectorAll('.ap-card-copy-url').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const url = btn.dataset.url;
-        if (!url) return;
-        try {
-          await navigator.clipboard.writeText(url);
-          showToast('✓ Ссылка скопирована');
-        } catch {
-          showToast('Не удалось скопировать');
-        }
-      });
+      const card = createCardElement(item, renderIdx, minPrice, isSelected);
+      fragment.appendChild(card);
     });
 
-    // Bind checkbox clicks
-    cardsEl.querySelectorAll('.ap-card-check').forEach(cb => {
-      cb.addEventListener('change', (e) => {
-        const card = e.target.closest('.ap-card');
-        const num = parseInt(card.dataset.cardNum, 10);
-        toggleSelection(num);
-      });
-    });
-
-    // Click on card row toggles checkbox
-    cardsEl.querySelectorAll('.ap-card').forEach(card => {
-      card.addEventListener('click', (e) => {
-        if (e.target.closest('a') || e.target.closest('.ap-card-check') || e.target.closest('.ap-card-copy-url')) return;
-        const num = parseInt(card.dataset.cardNum, 10);
-        toggleSelection(num);
-      });
-    });
+    cardsEl.replaceChildren(fragment);
   }
 
   function renderError(err) {
@@ -1330,12 +1567,18 @@
     if (fieldsBar) fieldsBar.style.display = 'none';
     if (exportRow) exportRow.style.display = 'none';
 
-    panelEl.querySelector('#ap-cards').innerHTML = `
-      <div class="ap-error-state">
-        <h3>Не удалось распарсить</h3>
-        <p>${esc(err.message)}<br>Попробуй обновить страницу</p>
-      </div>
-    `;
+    const cardsEl = panelEl.querySelector('#ap-cards');
+    if (!cardsEl) return;
+    const errWrap = document.createElement('div');
+    errWrap.className = 'ap-error-state';
+    const h3 = document.createElement('h3');
+    h3.textContent = 'Не удалось распарсить';
+    const p = document.createElement('p');
+    p.appendChild(document.createTextNode((err && err.message) ? err.message : 'Ошибка при сборе данных'));
+    p.appendChild(document.createElement('br'));
+    p.appendChild(document.createTextNode('Попробуй обновить страницу'));
+    errWrap.append(h3, p);
+    cardsEl.replaceChildren(errWrap);
   }
 
   // Export — selected items, or all filtered items if none selected
@@ -1413,12 +1656,6 @@
 
   function closePanel() {
     panelEl.classList.remove('ap-open');
-  }
-
-  function esc(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
   }
 
   // Messages from popup / service worker

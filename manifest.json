@@ -1,12 +1,23 @@
 {
   "manifest_version": 3,
-  "name": "Avito Parser",
+  "name": "Tool for Avito",
   "version": "1.0.0",
-  "description": "Парсит объявления Авито в структурированный формат для анализа через ИИ",
+  "description": "Инструмент аналитики цен и экспорта объявлений в Markdown, JSON и TSV для личного анализа. Неофициальное расширение.",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "tool-for-avito@topmob.addon",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
+    }
   },
   "permissions": [
     "activeTab",
@@ -19,6 +30,9 @@
     "*://m.avito.ru/*"
   ],
   "background": {
+    "scripts": [
+      "background/service-worker.js"
+    ],
     "service_worker": "background/service-worker.js"
   },
   "action": {
@@ -28,7 +42,7 @@
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     },
-    "default_title": "Avito Parser"
+    "default_title": "Tool for Avito"
   },
   "content_scripts": [
     {
@@ -50,7 +64,11 @@
       "resources": [
         "content/content.css"
       ],
-      "matches": ["*://www.avito.ru/*", "*://avito.ru/*", "*://m.avito.ru/*"]
+      "matches": [
+        "*://www.avito.ru/*",
+        "*://avito.ru/*",
+        "*://m.avito.ru/*"
+      ]
     }
   ]
 }

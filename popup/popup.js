@@ -5,7 +5,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const lastParse  = document.getElementById('last-parse');
   const lastInfo   = document.getElementById('last-info');
   const formatSel  = document.getElementById('default-format');
-  // Clear any leftover darkMode key from storage
+
+  // Clear any leftover legacy darkMode key from storage
   chrome.storage.local.remove(['darkMode']).catch(() => {});
 
   const stored = await chrome.storage.local.get(['defaultFormat', 'lastParse']);
@@ -14,11 +15,25 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (stored.lastParse) {
     const lp = stored.lastParse;
     lastParse.style.display = 'block';
-    lastInfo.innerHTML = `
-      <strong>${lp.count}</strong> объявлений<br>
-      ${lp.query ? `Запрос: ${esc(lp.query)}<br>` : ''}
-      ${lp.parsedAt ? new Date(lp.parsedAt).toLocaleString('ru-RU') : ''}
-    `;
+
+    // Safe DOM construction (No innerHTML / Zero UNSAFE_VAR_ASSIGNMENT)
+    lastInfo.textContent = '';
+    const strong = document.createElement('strong');
+    strong.textContent = String(lp.count || 0);
+    lastInfo.appendChild(strong);
+    lastInfo.appendChild(document.createTextNode(' объявлений'));
+
+    if (lp.query) {
+      lastInfo.appendChild(document.createElement('br'));
+      const queryLabel = document.createTextNode(`Запрос: ${lp.query}`);
+      lastInfo.appendChild(queryLabel);
+    }
+
+    if (lp.parsedAt) {
+      lastInfo.appendChild(document.createElement('br'));
+      const timeStr = new Date(lp.parsedAt).toLocaleString('ru-RU');
+      lastInfo.appendChild(document.createTextNode(timeStr));
+    }
   }
 
   try {
@@ -40,35 +55,29 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   btnParse.addEventListener('click', async () => {
     btnParse.disabled = true;
-    btnParse.textContent = 'Парсинг…';
+    btnParse.textContent = 'Сбор данных…';
 
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) throw new Error('No active tab');
       await chrome.tabs.sendMessage(tab.id, { type: 'TRIGGER_PARSE' });
 
       btnParse.textContent = 'Готово';
-      // Автоматически закрываем всплывающее окно попапа,
-      // чтобы сразу открыть боковую панель на странице без лишних кликов
+      // Закрываем окно попапа через небольшую паузу,
+      // чтобы сразу открыть боковую панель на странице
       setTimeout(() => {
         window.close();
       }, 250);
     } catch {
-      btnParse.textContent = 'Ошибка';
+      btnParse.textContent = 'Обнови вкладку';
       setTimeout(() => {
         btnParse.textContent = 'Собрать объявления';
         btnParse.disabled = false;
-      }, 1500);
+      }, 2000);
     }
   });
 
   formatSel.addEventListener('change', () => {
     chrome.storage.local.set({ defaultFormat: formatSel.value });
   });
-
-  function esc(str) {
-    if (!str) return '';
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-  }
 });
