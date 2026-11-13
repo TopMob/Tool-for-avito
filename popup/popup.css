@@ -208,6 +208,61 @@ body {
   color: #0f172a;
 }
 
+.popup-clear-session-btn {
+  align-self: flex-start;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  font: inherit;
+  font-size: 11px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.popup-clear-session-btn:hover,
+.popup-clear-session-btn:focus-visible {
+  color: #b91c1c;
+}
+
+.popup-clear-session-btn:focus-visible {
+  outline: 2px solid #ef4444;
+  outline-offset: 2px;
+}
+
+.popup-clear-confirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  color: #475569;
+}
+
+.popup-clear-confirm[hidden] {
+  display: none;
+}
+
+.popup-clear-confirm-action,
+.popup-clear-confirm-cancel {
+  padding: 4px 7px;
+  border: 1px solid #cbd5e1;
+  border-radius: 5px;
+  background: #fff;
+  color: #334155;
+  font: inherit;
+  cursor: pointer;
+}
+
+.popup-clear-confirm-action {
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.popup-clear-confirm-action:hover {
+  background: #fef2f2;
+}
+
 /* Quick export */
 .popup-export-section {
   display: flex;

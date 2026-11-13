@@ -442,9 +442,10 @@ const AvitoParser = (() => {
 
     // 2. Specific price container
     if (!price) {
-      const priceContainer = card.querySelector('[data-marker="item-price"], [class*="price-price-"], [class*="price-value"], [class*="price-current"]');
-      if (priceContainer) {
-        const currentPriceEl = priceContainer.querySelector('strong, [class*="price-text"], [itemprop="price"]') || priceContainer;
+      const priceContainer = card.querySelector('[data-marker="item-price"], [itemprop="price"]');
+      const fallbackPriceContainer = priceContainer || card.querySelector('[class*="price-price-"], [class*="price-value"], [class*="price-current"]');
+      if (fallbackPriceContainer) {
+        const currentPriceEl = fallbackPriceContainer.querySelector('strong, [itemprop="price"]') || fallbackPriceContainer;
         const clean = cleanPrice(currentPriceEl.textContent);
         const num = extractNumericPrice(clean);
         if (num && num > 0) {
@@ -850,11 +851,31 @@ const AvitoParser = (() => {
     };
   }
 
+  function deduplicateListings(items) {
+    if (!Array.isArray(items) || items.length === 0) return [];
+    const seenIds = new Set();
+    const seenUrls = new Set();
+    const unique = [];
+    for (const item of items) {
+      const id = item.id ? String(item.id) : '';
+      const url = item.url ? cleanUrl(item.url) : '';
+      if ((id && seenIds.has(id)) || (url && seenUrls.has(url))) continue;
+      unique.push(item);
+      if (id) seenIds.add(id);
+      if (url) seenUrls.add(url);
+    }
+    return unique;
+  }
+
   function parseFromDOM() {
     // 1. Search catalog & feed recommendation cards
-    const searchCards = document.querySelectorAll('[data-marker="item"], [data-marker="bx-recommendations-block-item"], [class*="iva-item-root"]');
+    let searchCards = document.querySelectorAll('[data-marker="item"], [data-marker="bx-recommendations-block-item"]');
+    // Class-based Avito markup is a last-resort fallback and may change between releases.
+    if (searchCards.length === 0) {
+      searchCards = document.querySelectorAll('[class*="iva-item-root"]');
+    }
     if (searchCards.length > 0) {
-      return Array.from(searchCards).map(parseDOMCard);
+      return deduplicateListings(Array.from(searchCards).map(parseDOMCard));
     }
 
     // 2. Feed / Recommendations cards (homepage)
@@ -972,6 +993,8 @@ const AvitoParser = (() => {
       resultItems = domItems;
       source = 'DOM';
     }
+
+    resultItems = deduplicateListings(resultItems);
 
     resultItems.forEach((item, idx) => {
       if (item.itemNum == null) {
@@ -1198,6 +1221,7 @@ const AvitoParser = (() => {
     extractNextDataDelivery,
     extractDOMReserved,
     extractNextDataReserved,
+    deduplicateListings,
     DEFAULT_FIELDS,
   };
 })();

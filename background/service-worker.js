@@ -7,10 +7,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'PARSE_RESULT') {
     const data = msg.data;
 
-    // Сохраняем последний результат и сессию в локальное хранилище
-    chrome.storage.local.set({ savedSession: data, lastParse: data }).catch(() => { });
-
-    // Обновляем бейдж на иконке для текущей вкладки
     if (data && typeof data.count === 'number' && data.count > 0) {
       const badgeOpts = { text: String(data.count) };
       const colorOpts = { color: '#6c5ce7' };
@@ -22,8 +18,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       chrome.action.setBadgeText(badgeOpts).catch(() => { });
       chrome.action.setBadgeBackgroundColor(colorOpts).catch(() => { });
+    } else {
+      const clearOpts = { text: '' };
+      if (sender.tab && typeof sender.tab.id === 'number') {
+        clearOpts.tabId = sender.tab.id;
+      }
+      chrome.action.setBadgeText(clearOpts).catch(() => { });
     }
 
+    sendResponse({ ok: true });
+  }
+
+  if (msg.type === 'CLEAR_BADGE') {
+    chrome.action.setBadgeText({ text: '' }).catch(() => { });
+    if (msg.tabId) {
+      chrome.action.setBadgeText({ text: '', tabId: msg.tabId }).catch(() => { });
+    }
     sendResponse({ ok: true });
   }
 });

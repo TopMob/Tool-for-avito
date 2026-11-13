@@ -16,6 +16,8 @@
   let filterInclude = '';
   let filterExclude = '';
   let hideReserved = true;
+  let startPage = 1;
+  let endPage = 1;
   let pagesLoaded = 1;
   let loadingPages = false;
   let isLoadingAll = false;
@@ -62,11 +64,6 @@
     host.style.cssText = 'all:initial; position:fixed; z-index:2147483647;';
     document.body.appendChild(host);
 
-    // Ensure any previously set theme attributes on documentElement are cleaned up
-    document.documentElement.removeAttribute('data-avito-theme');
-    document.documentElement.removeAttribute('data-avito-custom-theme');
-    document.documentElement.removeAttribute('data-avito-preset-theme');
-
     shadowRoot = host.attachShadow({ mode: 'closed' });
 
     injectStyles();
@@ -95,6 +92,8 @@
     fabEl.className = 'ap-fab';
     setSvgIcon(fabEl, ICON_PARSE);
     fabEl.title = 'Открыть панель Tool for Avito';
+    fabEl.setAttribute('aria-label', 'Открыть панель Tool for Avito');
+    fabEl.setAttribute('aria-expanded', 'false');
     fabEl.addEventListener('click', handleFabClick);
     shadowRoot.appendChild(fabEl);
   }
@@ -110,6 +109,8 @@
   function createPanel() {
     panelEl = document.createElement('div');
     panelEl.className = 'ap-panel';
+    panelEl.setAttribute('role', 'complementary');
+    panelEl.setAttribute('aria-label', 'Панель Tool for Avito');
     panelEl.innerHTML = `
       <div class="ap-header">
         <div class="ap-header-top">
@@ -117,7 +118,7 @@
           <div class="ap-header-actions">
             <button class="ap-header-btn" id="ap-header-parse" title="Собрать объявления с текущей страницы">🔄 Собрать</button>
             <button class="ap-header-btn" id="ap-toggle-filters" title="Скрыть/показать фильтры и поля">Фильтры ▾</button>
-            <button class="ap-close" title="Закрыть (Esc)">✕</button>
+            <button class="ap-close" type="button" title="Закрыть (Esc)" aria-label="Закрыть панель">✕</button>
           </div>
         </div>
         <div class="ap-stats" id="ap-stats"></div>
@@ -132,7 +133,7 @@
             <circle cx="11" cy="11" r="8"></circle>
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
-          <input type="text" class="ap-search-input" id="ap-search-input" placeholder="Поиск по номеру (№2) или тексту..." autocomplete="off">
+          <input type="text" class="ap-search-input" id="ap-search-input" aria-label="Поиск по объявлениям" placeholder="Поиск по номеру (№2) или тексту..." autocomplete="off">
           <button class="ap-search-clear" id="ap-search-clear" style="display:none" title="Очистить поиск">✕</button>
         </div>
         <span class="ap-search-count" id="ap-search-count"></span>
@@ -643,7 +644,9 @@
         lastParsedUrl = getSearchKey(); // запоминаем ключ поиска
         hideParseBanner();
         startUrlWatch(); // запускаем слежение (если ещё не запущено)
-        pagesLoaded = getInitialPage();
+        startPage = getInitialPage();
+        endPage = startPage;
+        pagesLoaded = startPage;
         loadingPages = false;
         isLoadingAll = false;
         abortLoadingAll = false;
@@ -706,8 +709,8 @@
     if (currentSort === 'price-asc' || currentSort === 'price-desc') {
       const dir = currentSort === 'price-asc' ? 1 : -1;
       displayItems.sort((a, b) => {
-        const pa = parsePrice(a.price);
-        const pb = parsePrice(b.price);
+        const pa = a.priceNum != null ? a.priceNum : parsePrice(a.price);
+        const pb = b.priceNum != null ? b.priceNum : parsePrice(b.price);
         if (pa === null && pb === null) return 0;
         if (pa === null) return 1;
         if (pb === null) return -1;
@@ -773,6 +776,7 @@
     const visible = getFilteredItems();
     const visibleTotal = visible.length;
     const selectedVisibleCount = visible.filter((item) => selectedIndices.has(item.itemNum)).length;
+    const hiddenSelectedCount = Math.max(0, selectedIndices.size - selectedVisibleCount);
 
     if (info) {
       info.textContent = 'Выбрано: ';
@@ -781,8 +785,13 @@
         strong.textContent = String(selectedVisibleCount);
         info.appendChild(strong);
         info.appendChild(document.createTextNode(` из ${visibleTotal}`));
+        if (hiddenSelectedCount > 0) {
+          info.appendChild(document.createTextNode(` (+${hiddenSelectedCount} скрыто фильтрами)`));
+        }
       } else {
-        info.appendChild(document.createTextNode(`0 из ${visibleTotal}`));
+        info.appendChild(document.createTextNode(selectedIndices.size > 0
+          ? `0 из ${visibleTotal} (отмеченные скрыты фильтрами)`
+          : `0 из ${visibleTotal}`));
       }
     }
 
@@ -801,7 +810,7 @@
   async function handleLoadMore() {
     if (loadingPages) return;
 
-    const nextPage = pagesLoaded + 1;
+    const nextPage = endPage + 1;
     const nextUrl = buildPageUrl(nextPage);
     if (!nextUrl) return;
 
@@ -823,8 +832,7 @@
       }
 
       const newItems = parseHTMLForItems(html);
-      const existingIds = new Set((lastResult?.items || []).map(it => it.id).filter(Boolean));
-      const uniqueNewItems = newItems.filter(it => !it.id || !existingIds.has(it.id));
+      const uniqueNewItems = deduplicateItems(newItems, lastResult?.items || []);
 
       if (uniqueNewItems.length === 0) {
         btn.textContent = 'Страниц больше нет';
@@ -841,7 +849,8 @@
         item.itemNum = lastResult.items.length + idx + 1;
       });
       lastResult.items.push(...uniqueNewItems);
-      pagesLoaded = nextPage;
+      endPage = nextPage;
+      pagesLoaded = endPage;
 
       applySortAndRender();
       updatePageInfo();
@@ -886,7 +895,7 @@
 
     try {
       while (!abortLoadingAll) {
-        const nextPage = pagesLoaded + 1;
+        const nextPage = endPage + 1;
         if (nextPage > MAX_PAGES) {
           btnLoadAll.textContent = `Лимит (${MAX_PAGES} стр.)`;
           await new Promise(r => setTimeout(r, 1500));
@@ -916,8 +925,7 @@
         if (abortLoadingAll) break;
 
         const newItems = parseHTMLForItems(html);
-        const existingIds = new Set((lastResult?.items || []).map(it => it.id).filter(Boolean));
-        const uniqueNewItems = newItems.filter(it => !it.id || !existingIds.has(it.id));
+        const uniqueNewItems = deduplicateItems(newItems, lastResult?.items || []);
 
         if (uniqueNewItems.length === 0) {
           btnLoadAll.textContent = 'Все загружены';
@@ -934,7 +942,8 @@
           item.itemNum = lastResult.items.length + idx + 1;
         });
         lastResult.items.push(...uniqueNewItems);
-        pagesLoaded = nextPage;
+        endPage = nextPage;
+        pagesLoaded = endPage;
 
         applySortAndRender();
         updatePageInfo();
@@ -968,6 +977,31 @@
     return url.toString();
   }
 
+  /**
+   * Deduplicate a fetched page against collected listings and within that page.
+   * @param {Array<Object>} candidates Listings parsed from the fetched page.
+   * @param {Array<Object>} existing Listings already collected.
+   * @returns {Array<Object>} New unique listings.
+   */
+  function deduplicateItems(candidates, existing) {
+    try {
+      const seenIds = new Set(existing.map(item => item.id).filter(Boolean).map(String));
+      const seenUrls = new Set(existing.map(item => item.url).filter(Boolean).map(url => AvitoParser.cleanUrl(url)).filter(Boolean));
+      const result = [];
+      for (const item of candidates) {
+        const id = item.id ? String(item.id) : '';
+        const url = item.url ? AvitoParser.cleanUrl(item.url) : '';
+        if ((id && seenIds.has(id)) || (url && seenUrls.has(url))) continue;
+        result.push(item);
+        if (id) seenIds.add(id);
+        if (url) seenUrls.add(url);
+      }
+      return result;
+    } catch {
+      return candidates;
+    }
+  }
+
   async function fetchPage(url) {
     const res = await fetch(url, { credentials: 'include' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -989,7 +1023,9 @@
     }
 
     // 1. Search catalog cards
-    const cards = doc.querySelectorAll('[data-marker="item"], [class*="iva-item-root"]');
+    let cards = doc.querySelectorAll('[data-marker="item"], [itemtype*="Product"]');
+    // Keep legacy class selectors as a fallback for pages without semantic markers.
+    if (cards.length === 0) cards = doc.querySelectorAll('[class*="iva-item-root"]');
     if (cards.length > 0) {
       return Array.from(cards).map(card => parseDOMCardFromDoc(card));
     }
@@ -1004,7 +1040,7 @@
       const containers = new Set();
       const feedCards = [];
       for (const a of itemLinks) {
-        const container = a.closest('div[class*="module"], div[class*="card"], div[class*="item"], div[class*="styles-module"]') || a.parentElement;
+        const container = a.closest('article, [data-marker="item"], [itemtype*="Product"]') || a.parentElement;
         if (container && !containers.has(container)) {
           containers.add(container);
           feedCards.push(container);
@@ -1140,7 +1176,9 @@
 
   function updatePageInfo() {
     const info = panelEl.querySelector('#ap-page-info');
-    if (info) info.textContent = pagesLoaded > 1 ? `Стр. 1–${pagesLoaded}` : 'Стр. 1';
+    if (info) {
+      info.textContent = startPage === endPage ? `Стр. ${startPage}` : `Стр. ${startPage}–${endPage}`;
+    }
   }
 
   function updateStats(currentItems) {
@@ -1187,7 +1225,10 @@
     pageStat.className = 'ap-stat';
     pageStat.appendChild(document.createTextNode('Стр: '));
     const strongPage = document.createElement('strong');
-    strongPage.textContent = String(pagesLoaded);
+    const pagesCount = Math.max(1, endPage - startPage + 1);
+    strongPage.textContent = pagesCount > 1
+      ? `${pagesCount} (${startPage}–${endPage})`
+      : (startPage > 1 ? `1 (№${startPage})` : '1');
     pageStat.appendChild(strongPage);
     statsFragment.appendChild(pageStat);
 
@@ -1556,7 +1597,12 @@
     if (visible.length === 0) return;
 
     const selectedVisible = visible.filter((item) => selectedIndices.has(item.itemNum));
-    const itemsToExport = selectedVisible.length > 0 ? selectedVisible : visible;
+    const hasSelection = selectedIndices.size > 0;
+    if (hasSelection && selectedVisible.length === 0) {
+      showToast('Отмеченные лоты скрыты фильтрами. Сбрось фильтры для экспорта.');
+      return;
+    }
+    const itemsToExport = hasSelection ? selectedVisible : visible;
 
     const format = btn.dataset.format;
     const exportQuery = (lastResult && lastResult.savedQuery) || AvitoParser.getSearchQuery();
@@ -1619,7 +1665,12 @@
 
   function openPanel() {
     panelEl.classList.add('ap-open');
-    if (fabEl) fabEl.title = 'Закрыть панель (Esc)';
+    if (fabEl) {
+      fabEl.title = 'Закрыть панель (Esc)';
+      fabEl.setAttribute('aria-label', 'Закрыть панель');
+      fabEl.setAttribute('aria-expanded', 'true');
+    }
+    requestAnimationFrame(() => panelEl.querySelector('.ap-close')?.focus());
     if (!lastResult || !lastResult.items || lastResult.items.length === 0) {
       renderInitialEmptyState();
     }
@@ -1627,7 +1678,12 @@
 
   function closePanel() {
     panelEl.classList.remove('ap-open');
-    if (fabEl) fabEl.title = 'Открыть панель Tool for Avito';
+    if (fabEl) {
+      fabEl.title = 'Открыть панель Tool for Avito';
+      fabEl.setAttribute('aria-label', 'Открыть панель Tool for Avito');
+      fabEl.setAttribute('aria-expanded', 'false');
+      fabEl.focus();
+    }
   }
 
   function renderInitialEmptyState() {
@@ -1675,10 +1731,11 @@
         const descSpan = document.createElement('span');
         descSpan.className = 'ap-empty-session-desc';
 
-        const d = session.parsedAt ? new Date(session.parsedAt) : null;
+        const rawDate = session.parsedAt || session.savedAt;
+        const d = rawDate ? new Date(rawDate) : null;
         const dateFormatted = d ? d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : '';
         const count = session.items.length;
-        const q = session.query || 'Поиск';
+        const q = session.query || session.savedQuery || 'Поиск';
         descSpan.textContent = `«${q}» · ${count} лотов ${dateFormatted ? '(' + dateFormatted + ')' : ''}`;
 
         loadBtn.append(titleSpan, descSpan);
@@ -1696,16 +1753,19 @@
   function loadSavedSession(session) {
     if (!session || !Array.isArray(session.items) || session.items.length === 0) return;
 
+    const sessionQuery = session.query || session.savedQuery || '';
     lastResult = {
       items: session.items.map((it, idx) => ({
         ...it,
         itemNum: it.itemNum != null ? it.itemNum : (idx + 1),
       })),
       source: 'Сохранено',
-      savedQuery: session.query || '',
+      savedQuery: sessionQuery,
     };
 
     lastParsedUrl = session.url || '';
+    startPage = 1;
+    endPage = 1;
     pagesLoaded = 1;
     loadingPages = false;
     isLoadingAll = false;
@@ -1768,22 +1828,25 @@
       image: item.image || '',
     }));
 
+    const sessionQuery = (lastResult && lastResult.savedQuery) || AvitoParser.getSearchQuery() || 'Поиск Авито';
+    const nowIso = new Date().toISOString();
     const sessionData = {
-      query: (lastResult && lastResult.savedQuery) || AvitoParser.getSearchQuery() || 'Поиск Авито',
+      query: sessionQuery,
+      savedQuery: sessionQuery,
       count: lastResult.items.length,
       url: window.location.href,
-      parsedAt: new Date().toISOString(),
+      parsedAt: nowIso,
+      savedAt: nowIso,
       items: itemsToSave,
     };
 
-    chrome.storage.local.set({
-      savedSession: sessionData,
-      lastParse: sessionData,
-    }).catch(() => {});
+    chrome.storage.local.set({ savedSession: sessionData })
+      .then(() => chrome.storage.local.remove(['lastParse']))
+      .catch(() => showToast('Не удалось сохранить сессию'));
 
     chrome.runtime.sendMessage({
       type: 'PARSE_RESULT',
-      data: sessionData,
+      data: { count: sessionData.count },
     }).catch(() => {});
   }
 
@@ -1791,6 +1854,16 @@
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === 'TRIGGER_PARSE') {
       handleParse();
+      sendResponse({ ok: true });
+    }
+    if (msg.type === 'SESSION_CLEARED') {
+      if (lastResult && lastResult.source === 'Сохранено') {
+        lastResult = null;
+        displayItems = [];
+        selectedIndices = new Set();
+        renderInitialEmptyState();
+        updateFabBadge(0);
+      }
       sendResponse({ ok: true });
     }
     if (msg.type === 'LOAD_SAVED_SESSION') {

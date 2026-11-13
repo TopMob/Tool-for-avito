@@ -8,6 +8,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const savedQuery   = document.getElementById('saved-query');
   const savedDate    = document.getElementById('saved-date');
   const btnOpen      = document.getElementById('btn-open-session');
+  const btnClear     = document.getElementById('btn-clear-session');
+  const clearConfirm = document.getElementById('clear-session-confirm');
+  const btnConfirmClear = document.getElementById('confirm-clear-session');
+  const btnCancelClear = document.getElementById('cancel-clear-session');
   const btnToggle    = document.getElementById('btn-toggle-list');
   const previewEl    = document.getElementById('lots-preview');
   const lotsList     = document.getElementById('lots-list');
@@ -48,12 +52,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     savedBlock.style.display = 'flex';
 
     const count = currentSession.count || (currentSession.items ? currentSession.items.length : 0);
-    savedBadge.textContent = `${count} шт.`;
+    const savedCount = Array.isArray(currentSession.items) ? currentSession.items.length : 0;
+    savedBadge.textContent = savedCount < count ? `${savedCount} из ${count} шт.` : `${count} шт.`;
 
-    savedQuery.textContent = currentSession.query ? `«${currentSession.query}»` : 'Поиск без названия';
+    const sessionQuery = currentSession.query || currentSession.savedQuery || '';
+    savedQuery.textContent = sessionQuery ? `«${sessionQuery}»` : 'Поиск без названия';
 
-    if (currentSession.parsedAt) {
-      const d = new Date(currentSession.parsedAt);
+    const rawDate = currentSession.parsedAt || currentSession.savedAt;
+    if (rawDate) {
+      const d = new Date(rawDate);
       const dateStr = d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
       const timeStr = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
       savedDate.textContent = `${dateStr}, ${timeStr}`;
@@ -61,6 +68,55 @@ document.addEventListener('DOMContentLoaded', async () => {
       savedDate.textContent = '';
     }
   }
+
+  btnClear.addEventListener('click', () => {
+    clearConfirm.hidden = false;
+    btnClear.hidden = true;
+    btnConfirmClear.focus();
+  });
+
+  btnCancelClear.addEventListener('click', () => {
+    clearConfirm.hidden = true;
+    btnClear.hidden = false;
+    btnClear.focus();
+  });
+
+  btnConfirmClear.addEventListener('click', async () => {
+    if (!currentSession) return;
+    btnConfirmClear.disabled = true;
+    try {
+      await chrome.storage.local.remove(['savedSession', 'lastParse']);
+      currentSession = null;
+      savedBlock.style.display = 'none';
+
+      // Reset confirmation and preview states
+      clearConfirm.hidden = true;
+      btnClear.hidden = false;
+      previewEl.style.display = 'none';
+      btnToggle.textContent = 'Список ▾';
+      btnToggle.classList.remove('popup-sub-btn-active');
+      listRendered = false;
+      lotsList.replaceChildren();
+
+      // Clear toolbar badge globally and notify background/tabs
+      chrome.action.setBadgeText({ text: '' }).catch(() => { });
+      chrome.runtime.sendMessage({ type: 'CLEAR_BADGE' }).catch(() => { });
+
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab?.id) {
+          chrome.action.setBadgeText({ text: '', tabId: tab.id }).catch(() => { });
+          chrome.tabs.sendMessage(tab.id, { type: 'SESSION_CLEARED' }).catch(() => { });
+        }
+      } catch { }
+
+      showToast('Сохранённые лоты удалены');
+    } catch {
+      showToast('Не удалось удалить сохранённые лоты');
+    } finally {
+      btnConfirmClear.disabled = false;
+    }
+  });
 
   // Render items preview list
   function renderLotsList() {
@@ -166,13 +222,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       const fields = stored.ap_export_fields || (typeof AvitoParser !== 'undefined' ? AvitoParser.DEFAULT_FIELDS : {});
       let text = '';
 
+      const exportQuery = currentSession.query || currentSession.savedQuery || '';
       if (typeof AvitoParser !== 'undefined') {
         if (format === 'md') {
-          text = AvitoParser.toMarkdown(currentSession.items, fields, currentSession.query);
+          text = AvitoParser.toMarkdown(currentSession.items, fields, exportQuery);
         } else if (format === 'json') {
-          text = AvitoParser.toJSON(currentSession.items, fields, currentSession.query);
+          text = AvitoParser.toJSON(currentSession.items, fields, exportQuery);
         } else if (format === 'tsv') {
-          text = AvitoParser.toTSV(currentSession.items, fields, currentSession.query);
+          text = AvitoParser.toTSV(currentSession.items, fields, exportQuery);
         }
       }
 
