@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tool for Avito",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Инструмент аналитики цен и экспорта объявлений в Markdown, JSON и TSV для личного анализа. Неофициальное расширение.",
   "icons": {
     "16": "icons/icon16.png",
